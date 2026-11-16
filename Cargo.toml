@@ -15,22 +15,22 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/riffty-sh/riffty"
 
 [workspace.dependencies]
-riffty_core = { version = "0.1.0", path = "crates/riffty_core" }
-riffty_pipeline = { version = "0.1.0", path = "crates/riffty_pipeline" }
-riffty_rules_builtin = { version = "0.1.0", path = "crates/riffty_rules_builtin" }
-riffty_adapter_ruff_ast = { version = "0.1.0", path = "crates/adapters/riffty_adapter_ruff_ast" }
-riffty_adapter_fs = { version = "0.1.0", path = "crates/adapters/riffty_adapter_fs" }
-riffty_adapter_ast_grep = { version = "0.1.0", path = "crates/adapters/riffty_adapter_ast_grep" }
-riffty_adapter_ty = { version = "0.1.0", path = "crates/adapters/riffty_adapter_ty" }
-riffty_adapter_refaster = { version = "0.1.0", path = "crates/adapters/riffty_adapter_refaster" }
-riffty_mcp = { version = "0.1.0", path = "apps/riffty_mcp" }
+riffty_core = { version = "0.2.0", path = "crates/riffty_core" }
+riffty_pipeline = { version = "0.2.0", path = "crates/riffty_pipeline" }
+riffty_rules_builtin = { version = "0.2.0", path = "crates/riffty_rules_builtin" }
+riffty_adapter_ruff_ast = { version = "0.2.0", path = "crates/adapters/riffty_adapter_ruff_ast" }
+riffty_adapter_fs = { version = "0.2.0", path = "crates/adapters/riffty_adapter_fs" }
+riffty_adapter_ast_grep = { version = "0.2.0", path = "crates/adapters/riffty_adapter_ast_grep" }
+riffty_adapter_ty = { version = "0.2.0", path = "crates/adapters/riffty_adapter_ty" }
+riffty_adapter_refaster = { version = "0.2.0", path = "crates/adapters/riffty_adapter_refaster" }
+riffty_mcp = { version = "0.2.0", path = "apps/riffty_mcp" }
 clap = { version = "4.6", features = ["derive", "env"] }
 rmcp = { version = "3.10.0", default-features = false, features = ["server", "transport-io"] }
 tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "io-std", "sync"] }
