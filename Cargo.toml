@@ -3,11 +3,13 @@ resolver = "2"
 members = [
     "crates/riffty_core",
     "crates/riffty_pipeline",
+    "crates/riffty_rules_builtin",
     "crates/adapters/riffty_adapter_ruff_ast",
     "crates/adapters/riffty_adapter_fs",
     "crates/adapters/riffty_adapter_ast_grep",
     "crates/adapters/riffty_adapter_ty",
     "crates/adapters/riffty_adapter_refaster",
+    "tests/conformance",
 ]
 
 [workspace.package]
@@ -20,9 +22,12 @@ repository = "https://github.com/riffty-sh/riffty"
 [workspace.dependencies]
 riffty_core = { version = "0.1.0", path = "crates/riffty_core" }
 riffty_pipeline = { version = "0.1.0", path = "crates/riffty_pipeline" }
+riffty_rules_builtin = { version = "0.1.0", path = "crates/riffty_rules_builtin" }
 riffty_adapter_ruff_ast = { version = "0.1.0", path = "crates/adapters/riffty_adapter_ruff_ast" }
+riffty_adapter_fs = { version = "0.1.0", path = "crates/adapters/riffty_adapter_fs" }
 riffty_adapter_ast_grep = { version = "0.1.0", path = "crates/adapters/riffty_adapter_ast_grep" }
 riffty_adapter_ty = { version = "0.1.0", path = "crates/adapters/riffty_adapter_ty" }
+riffty_adapter_refaster = { version = "0.1.0", path = "crates/adapters/riffty_adapter_refaster" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml_ng = "0.10.0"

@@ -1,0 +1,56 @@
+# Open Issue Pack: langchain-ai/langchain#38054 [OPEN]
+# "refactor: migrate legacy pydantic .dict() to .model_dump()"
+rules:
+  - id: RFT-LC-38054-DICT
+    name: langchain-pydantic-v2-model-dump
+    severity: warning
+    applicability: safe
+    message: "Open issue langchain#38054: legacy Pydantic `.dict()` on `BaseModel` instance `$MODEL` is deprecated in Pydantic v2; migrate to `.model_dump()`."
+    pattern: "$MODEL.dict($$$ARGS)"
+    guards:
+      - kind: type_assignable_to
+        target: "$MODEL"
+        expected_type: "pydantic.BaseModel"
+      - kind: not_overridden_below
+        target: "$MODEL"
+        method: "dict"
+        base_type: "pydantic.BaseModel"
+        downgrade_to_unsafe: true
+    replace: "$MODEL.model_dump($$$ARGS)"
+    fix_title: "Migrate `.dict(...)` to `.model_dump(...)` (langchain#38054)"
+
+  - id: RFT-LC-38054-JSON
+    name: langchain-pydantic-v2-model-dump-json
+    severity: warning
+    applicability: safe
+    message: "Open issue langchain#38054: legacy Pydantic `.json()` on `BaseModel` instance `$MODEL` is deprecated in Pydantic v2; migrate to `.model_dump_json()`."
+    pattern: "$MODEL.json($$$ARGS)"
+    guards:
+      - kind: type_assignable_to
+        target: "$MODEL"
+        expected_type: "pydantic.BaseModel"
+      - kind: not_overridden_below
+        target: "$MODEL"
+        method: "json"
+        base_type: "pydantic.BaseModel"
+        downgrade_to_unsafe: true
+    replace: "$MODEL.model_dump_json($$$ARGS)"
+    fix_title: "Migrate `.json(...)` to `.model_dump_json(...)` (langchain#38054)"
+
+  - id: RFT-LC-38054-VALIDATE
+    name: langchain-pydantic-v2-model-validate
+    severity: warning
+    applicability: safe
+    message: "Open issue langchain#38054: legacy Pydantic `.parse_obj()` on `BaseModel` class `$CLS` is deprecated in Pydantic v2; migrate to `.model_validate()`."
+    pattern: "$CLS.parse_obj($$$ARGS)"
+    guards:
+      - kind: type_assignable_to
+        target: "$CLS"
+        expected_type: "pydantic.BaseModel"
+      - kind: not_overridden_below
+        target: "$CLS"
+        method: "parse_obj"
+        base_type: "pydantic.BaseModel"
+        downgrade_to_unsafe: true
+    replace: "$CLS.model_validate($$$ARGS)"
+    fix_title: "Migrate `.parse_obj(...)` to `.model_validate(...)` (langchain#38054)"

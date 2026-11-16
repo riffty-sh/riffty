@@ -1084,6 +1084,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "riffty_conformance"
+version = "0.1.0"
+dependencies = [
+ "riffty_adapter_ast_grep",
+ "riffty_adapter_fs",
+ "riffty_adapter_refaster",
+ "riffty_adapter_ruff_ast",
+ "riffty_adapter_ty",
+ "riffty_core",
+ "riffty_pipeline",
+ "riffty_rules_builtin",
+ "serde_json",
+]
+
+[[package]]
 name = "riffty_core"
 version = "0.1.0"
 dependencies = [
@@ -1097,6 +1112,17 @@ version = "0.1.0"
 dependencies = [
  "riffty_core",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "riffty_rules_builtin"
+version = "0.1.0"
+dependencies = [
+ "riffty_adapter_ruff_ast",
+ "riffty_adapter_ty",
+ "riffty_core",
+ "riffty_pipeline",
  "serde_json",
 ]
 
