@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run Workspace Test Suite (Zero Warnings Gate)
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: cargo test --workspace
+      - name: Run Clippy All-Targets Strict Gate
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Run Boule 95% Affirmation Traceability Gate
+        run: node scripts/affirmation-tracer.mjs audit
+

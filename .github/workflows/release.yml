@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-binaries:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            ext: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-14
+            ext: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-14
+            ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            ext: zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build release binaries
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin riffty --bin riffty_mcp
+      - name: Package Unix archive
+        if: matrix.ext == 'tar.gz'
+        shell: bash
+        run: |
+          mkdir -p dist staging
+          cp "target/${{ matrix.target }}/release/riffty" staging/
+          cp "target/${{ matrix.target }}/release/riffty_mcp" staging/
+          cp LICENSE README.md staging/
+          tar -C staging -czf "dist/riffty-${{ matrix.target }}.tar.gz" .
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum "riffty-${{ matrix.target }}.tar.gz" > "riffty-${{ matrix.target }}.tar.gz.sha256")
+          else
+            (cd dist && shasum -a 256 "riffty-${{ matrix.target }}.tar.gz" > "riffty-${{ matrix.target }}.tar.gz.sha256")
+          fi
+      - name: Package Windows archive
+        if: matrix.ext == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist, staging | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/riffty.exe" staging/
+          Copy-Item "target/${{ matrix.target }}/release/riffty_mcp.exe" staging/
+          Copy-Item LICENSE, README.md staging/
+          Compress-Archive -Path staging/* -DestinationPath "dist/riffty-${{ matrix.target }}.zip"
+          $hash = (Get-FileHash "dist/riffty-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  riffty-${{ matrix.target }}.zip" | Out-File -Encoding ascii "dist/riffty-${{ matrix.target }}.zip.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/*
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Prepare installers
+        run: |
+          cp scripts/install.sh artifacts/riffty-installer.sh
+          cp scripts/install.ps1 artifacts/riffty-installer.ps1
+          chmod +x artifacts/riffty-installer.sh
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') }}
