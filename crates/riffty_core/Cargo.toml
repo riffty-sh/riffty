@@ -1,0 +1,10 @@
+[package]
+name = "riffty_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pure domain core for riffty: canonical IR, semantic type lattice, byte-offset fix algebra, and Hexagonal Driven Ports."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
