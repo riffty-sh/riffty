@@ -1,0 +1,30 @@
+# Declarative Refaster YAML ruleset for `riffty check --rules rules/default.yml`
+rules:
+  - id: RFT-YAML-201
+    name: pydantic-v2-model-dump
+    severity: warning
+    applicability: safe
+    message: "Pydantic v1 `.dict()` is deprecated in Pydantic v2; use `.model_dump()`."
+    pattern: "$MODEL.dict($$$ARGS)"
+    guards:
+      - kind: fqname_in
+        allowed: ["pydantic.BaseModel.dict"]
+    replace: "$MODEL.model_dump($$$ARGS)"
+    fix_title: "Migrate `.dict(...)` to `.model_dump(...)`"
+
+  - id: RFT-YAML-205
+    name: clamp-positive-int-via-max
+    severity: info
+    applicability: safe
+    message: "Simplify positive integer floor expression on `$X` to `max(0, $X)`."
+    pattern: "$X if $X > 0 else 0"
+    guards:
+      - kind: type_assignable_to
+        target: "$X"
+        expected_type: int
+      - kind: purity
+        target: "$X"
+        expected: pure
+    replace: "max(0, $X)"
+    fix_title: "Rewrite integer ternary floor to `max(0, ...)`"
+

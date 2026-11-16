@@ -1,0 +1,20 @@
+[package]
+name = "riffty_adapter_ty"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Driven Adapter implementing TypeOraclePort via Astral's ty Salsa DB (ty_python_semantic + ruff_db + ty_vendored) plus NullTypeOracle fallback."
+
+[dependencies]
+riffty_core.workspace = true
+ruff_db.workspace = true
+ruff_python_ast.workspace = true
+ruff_python_parser.workspace = true
+ruff_text_size.workspace = true
+salsa.workspace = true
+ty_module_resolver.workspace = true
+ty_python_core.workspace = true
+ty_python_semantic.workspace = true
+ty_site_packages.workspace = true
+ty_vendored.workspace = true
+

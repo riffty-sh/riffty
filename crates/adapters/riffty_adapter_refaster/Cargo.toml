@@ -1,0 +1,18 @@
+[package]
+name = "riffty_adapter_refaster"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+riffty_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+
+[dev-dependencies]
+riffty_adapter_ast_grep.workspace = true
+riffty_adapter_ruff_ast.workspace = true
+riffty_adapter_ty.workspace = true
+riffty_pipeline.workspace = true
+
