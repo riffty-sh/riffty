@@ -595,6 +595,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "riffty_pipeline"
+version = "0.1.0"
+dependencies = [
+ "riffty_core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ruff_python_ast"
 version = "0.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"

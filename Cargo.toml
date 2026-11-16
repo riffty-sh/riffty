@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/riffty_core",
+    "crates/riffty_pipeline",
     "crates/adapters/riffty_adapter_fs",
     "crates/adapters/riffty_adapter_ruff_ast",
 ]

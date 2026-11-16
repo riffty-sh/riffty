@@ -1,0 +1,12 @@
+[package]
+name = "riffty_pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Single-pass rule dispatcher, deterministic overlap conflict resolver, bottom-to-top byte patcher, 10-pass fixpoint loop, and MCP ReviewFacade."
+
+[dependencies]
+riffty_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
