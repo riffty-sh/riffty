@@ -1,0 +1,11 @@
+services:
+  riffty-check:
+    build: .
+    working_dir: /repo
+    volumes:
+      - .:/repo
+    environment:
+      RIFFTY_FORMAT: text
+      RIFFTY_MAX_PASSES: "10"
+    command: ["check", "."]
+
