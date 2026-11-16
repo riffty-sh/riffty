@@ -2,7 +2,9 @@
 name = "riffty_core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Pure domain core for riffty: canonical IR, semantic type lattice, byte-offset fix algebra, and Hexagonal Driven Ports."
 
 [dependencies]

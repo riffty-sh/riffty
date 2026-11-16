@@ -1,0 +1,14 @@
+[package]
+name = "riffty_adapter_ruff_ast"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Driven Adapter implementing SyntaxParserPort and ImportManagerPort via ruff_python_parser and ruff_python_codegen."
+
+[dependencies]
+riffty_core.workspace = true
+ruff_python_ast.workspace = true
+ruff_python_codegen.workspace = true
+ruff_python_parser.workspace = true
+ruff_text_size.workspace = true
+

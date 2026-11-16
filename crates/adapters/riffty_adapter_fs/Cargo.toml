@@ -1,0 +1,11 @@
+[package]
+name = "riffty_adapter_fs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Driven Adapter implementing WorkspaceVfsPort, PatchApplierPort, and GitDiffPort."
+
+[dependencies]
+ignore.workspace = true
+riffty_core.workspace = true
+

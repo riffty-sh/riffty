@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/riffty_core",
+    "crates/adapters/riffty_adapter_fs",
+    "crates/adapters/riffty_adapter_ruff_ast",
 ]
 
 [workspace.package]
@@ -13,24 +15,10 @@ repository = "https://github.com/riffty-sh/riffty"
 
 [workspace.dependencies]
 riffty_core = { version = "0.1.0", path = "crates/riffty_core" }
-clap = { version = "4.6", features = ["derive", "env"] }
-rmcp = { version = "3.10.0", default-features = false, features = ["server", "transport-io"] }
-tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "io-std", "sync"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_yaml_ng = "0.10.0"
-toml = "1.2"
 ignore = "0.4"
 ruff_python_parser = "0.0.22"
 ruff_python_ast = "0.0.22"
 ruff_python_codegen = "0.0.22"
 ruff_text_size = "0.0.22"
-ruff_db = { version = "0.0.22", default-features = false }
-ty_module_resolver = "0.0.22"
-ty_python_core = { version = "0.0.22", features = ["testing"] }
-ty_python_semantic = "0.0.22"
-ty_site_packages = "0.0.22"
-ty_vendored = "0.0.22"
-salsa = { version = "0.28.5", default-features = false, features = ["compact_str", "macros", "salsa_unstable", "inventory", "ordermap"] }
-ast-grep-core = "0.51.2"
-ast-grep-language = { version = "0.51.2", default-features = false, features = ["tree-sitter-python"] }
