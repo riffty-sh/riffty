@@ -63,7 +63,7 @@ jobs:
           Compress-Archive -Path staging/* -DestinationPath "dist/riffty-${{ matrix.target }}.zip"
           $hash = (Get-FileHash "dist/riffty-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  riffty-${{ matrix.target }}.zip" | Out-File -Encoding ascii "dist/riffty-${{ matrix.target }}.zip.sha256"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.target }}
           path: dist/*
