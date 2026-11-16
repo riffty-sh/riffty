@@ -1,0 +1,12 @@
+/target/
+**/target/
+.DS_Store
+.git_commit_msg.tmp
+*.profraw
+*.lcov
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+

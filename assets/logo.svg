@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="riffty logo">
+  <defs>
+    <linearGradient id="rifftyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF5A36"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+  <rect width="120" height="120" rx="26" fill="#0F172A"/>
+  <path d="M36 86V34h26c13 0 22 8 22 19 0 9-6 16-15 18l17 15H70L55 72H48v14H36zm12-25h13c6 0 10-3 10-8s-4-8-10-8H48v16z" fill="url(#rifftyGrad)"/>
+  <circle cx="90" cy="30" r="7" fill="#38BDF8"/>
+</svg>
+
