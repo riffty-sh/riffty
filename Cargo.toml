@@ -10,6 +10,7 @@ members = [
     "crates/adapters/riffty_adapter_ty",
     "crates/adapters/riffty_adapter_refaster",
     "apps/riffty_mcp",
+    "apps/riffty_cli",
     "tests/conformance",
 ]
 
@@ -29,11 +30,14 @@ riffty_adapter_fs = { version = "0.1.0", path = "crates/adapters/riffty_adapter_
 riffty_adapter_ast_grep = { version = "0.1.0", path = "crates/adapters/riffty_adapter_ast_grep" }
 riffty_adapter_ty = { version = "0.1.0", path = "crates/adapters/riffty_adapter_ty" }
 riffty_adapter_refaster = { version = "0.1.0", path = "crates/adapters/riffty_adapter_refaster" }
+riffty_mcp = { version = "0.1.0", path = "apps/riffty_mcp" }
+clap = { version = "4.6", features = ["derive", "env"] }
 rmcp = { version = "3.10.0", default-features = false, features = ["server", "transport-io"] }
 tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "io-std", "sync"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml_ng = "0.10.0"
+toml = "1.2"
 ignore = "0.4"
 ruff_python_parser = "0.0.22"
 ruff_python_ast = "0.0.22"

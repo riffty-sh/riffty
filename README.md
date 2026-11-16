@@ -115,3 +115,4 @@ node scripts/affirmation-tracer.mjs audit
 - **Historical Pre-Fix Suite**: 6 real cloned GitHub repositories validated end-to-end with zero false positives.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and `docs/` for architecture and governance details.
+
