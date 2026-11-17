@@ -360,10 +360,7 @@ impl CanonicalSyntaxTree {
         self.suppressions.iter().any(|sup| {
             sup.line == line
                 && (sup.rule_ids.is_empty()
-                    || sup
-                        .rule_ids
-                        .iter()
-                        .any(|r| r.eq_ignore_ascii_case(rule_id)))
+                    || sup.rule_ids.iter().any(|r| r.eq_ignore_ascii_case(rule_id)))
         })
     }
 }
@@ -453,6 +450,8 @@ pub enum CanonicalType {
         fqname: String,
         args: Vec<CanonicalType>,
     },
+    /// Arbitrary-length homogeneous tuple `tuple[T, ...]`, distinct from fixed-arity `tuple[T]`.
+    VariadicTuple(Box<CanonicalType>),
     Union(Vec<CanonicalType>),
     Callable {
         params: Vec<ParamInfo>,
@@ -495,41 +494,44 @@ impl CanonicalType {
         }
     }
 
-    /// Extracts the membership element type `T` tested by `x in container`.
+    /// Extracts the membership/iteration element type `T` tested by `x in container` or `for x in container`.
     pub fn container_element_type(&self) -> Option<CanonicalType> {
         match self {
             CanonicalType::Primitive(PrimitiveKind::Str) => {
                 Some(CanonicalType::Primitive(PrimitiveKind::Str))
             }
-            CanonicalType::Nominal { fqname, args } => match fqname.as_str() {
-                "builtins.set"
-                | "set"
-                | "builtins.frozenset"
+            CanonicalType::VariadicTuple(elem) => Some((**elem).clone()),
+            CanonicalType::Nominal { fqname, args } => match canonical_nominal_key(fqname) {
+                "set"
                 | "frozenset"
-                | "builtins.list"
                 | "list"
-                | "builtins.Sequence"
-                | "typing.Sequence"
                 | "collections.abc.Sequence"
-                | "typing.Set"
-                | "typing.FrozenSet"
-                | "typing.List"
-                | "typing.AbstractSet"
+                | "collections.abc.MutableSequence"
                 | "collections.abc.Set"
+                | "collections.abc.MutableSet"
                 | "collections.abc.Collection"
-                | "typing.Collection" => args.first().cloned(),
-                "builtins.dict"
+                | "collections.abc.Iterable"
+                | "collections.abc.Reversible"
                 | "dict"
-                | "typing.Dict"
-                | "typing.Mapping"
-                | "collections.abc.Mapping" => args.first().cloned(),
-                "builtins.tuple" | "tuple" | "typing.Tuple" => {
+                | "collections.abc.Mapping"
+                | "collections.abc.MutableMapping" => args.first().cloned(),
+                "tuple" => {
                     if args.is_empty() {
                         None
                     } else if args.len() == 1 {
                         args.first().cloned()
                     } else {
-                        Some(CanonicalType::Union(args.clone()))
+                        let mut unique: Vec<CanonicalType> = Vec::new();
+                        for a in args {
+                            if !unique.contains(a) {
+                                unique.push(a.clone());
+                            }
+                        }
+                        if unique.len() == 1 {
+                            unique.pop()
+                        } else {
+                            Some(CanonicalType::Union(unique))
+                        }
                     }
                 }
                 _ => None,
@@ -543,14 +545,8 @@ impl CanonicalType {
         match self {
             CanonicalType::Nominal { fqname, args }
                 if matches!(
-                    fqname.as_str(),
-                    "builtins.dict"
-                        | "dict"
-                        | "typing.Dict"
-                        | "typing.Mapping"
-                        | "collections.abc.Mapping"
-                        | "typing.MutableMapping"
-                        | "collections.abc.MutableMapping"
+                    canonical_nominal_key(fqname),
+                    "dict" | "collections.abc.Mapping" | "collections.abc.MutableMapping"
                 ) =>
             {
                 args.get(1).cloned()
@@ -569,12 +565,16 @@ impl CanonicalType {
             CanonicalType::Primitive(PrimitiveKind::Float) => "float".to_string(),
             CanonicalType::Primitive(PrimitiveKind::Bool) => "bool".to_string(),
             CanonicalType::Primitive(PrimitiveKind::Bytes) => "bytes".to_string(),
+            CanonicalType::VariadicTuple(elem) => {
+                format!("tuple[{}, ...]", elem.display_short())
+            }
             CanonicalType::Nominal { fqname, args } => {
                 let short = fqname.strip_prefix("builtins.").unwrap_or(fqname);
                 if args.is_empty() {
                     short.to_string()
                 } else {
-                    let inner: Vec<String> = args.iter().map(CanonicalType::display_short).collect();
+                    let inner: Vec<String> =
+                        args.iter().map(CanonicalType::display_short).collect();
                     format!("{short}[{}]", inner.join(", "))
                 }
             }
@@ -592,6 +592,392 @@ impl CanonicalType {
             }
         }
     }
+
+    /// Pure parser for Python static type expressions (e.g. `"tuple[str, ...]"`, `"list[tuple[str, ...]]"`,
+    /// `"Sequence[str]"`, `"int | str"`, `"Optional[int]"`), preserving `R01` zero-dependency purity.
+    pub fn parse_type_expr(raw: &str) -> CanonicalType {
+        let trimmed = strip_balanced_outer_parens(raw);
+        if trimmed.is_empty() || trimmed == "Unknown" {
+            return CanonicalType::Unknown;
+        }
+        if matches!(trimmed, "Any" | "typing.Any" | "typing_extensions.Any") {
+            return CanonicalType::Any;
+        }
+        if matches!(trimmed, "None" | "NoneType" | "types.NoneType") {
+            return CanonicalType::NoneType;
+        }
+        if let Some(parts) = split_top_level_type_pipe(trimmed) {
+            let parsed_parts: Vec<CanonicalType> = parts
+                .into_iter()
+                .map(CanonicalType::parse_type_expr)
+                .collect();
+            return CanonicalType::Union(parsed_parts);
+        }
+        if let Some(bracket_idx) = trimmed.find('[')
+            && trimmed.ends_with(']')
+        {
+            let head = trimmed[..bracket_idx].trim();
+            let inner = &trimmed[bracket_idx + 1..trimmed.len() - 1];
+            let raw_args = split_top_level_type_commas(inner);
+            if is_tuple_type_head(head) {
+                if raw_args.len() == 2 && raw_args[1] == "..." {
+                    return CanonicalType::VariadicTuple(Box::new(CanonicalType::parse_type_expr(
+                        raw_args[0],
+                    )));
+                }
+                if raw_args.is_empty()
+                    || (raw_args.len() == 1 && matches!(raw_args[0], "()" | "..."))
+                {
+                    return CanonicalType::Nominal {
+                        fqname: "builtins.tuple".to_string(),
+                        args: Vec::new(),
+                    };
+                }
+            }
+            let args = raw_args
+                .into_iter()
+                .filter(|seg| *seg != "...")
+                .map(CanonicalType::parse_type_expr)
+                .collect();
+            return normalize_subscript_canonical_type(head, args);
+        }
+
+        parse_bare_nominal_or_primitive(trimmed)
+    }
+}
+
+pub fn is_tuple_type_head(head: &str) -> bool {
+    matches!(
+        head,
+        "tuple" | "builtins.tuple" | "Tuple" | "typing.Tuple" | "typing_extensions.Tuple"
+    )
+}
+
+pub fn normalize_subscript_canonical_type(head: &str, args: Vec<CanonicalType>) -> CanonicalType {
+    match head {
+        "Optional" | "typing.Optional" | "typing_extensions.Optional" => {
+            let inner = args.into_iter().next().unwrap_or(CanonicalType::Unknown);
+            CanonicalType::Union(vec![inner, CanonicalType::NoneType])
+        }
+        "Union" | "typing.Union" | "typing_extensions.Union" => CanonicalType::Union(args),
+        "type" | "builtins.type" | "Type" | "typing.Type" => CanonicalType::Nominal {
+            fqname: "builtins.type".to_string(),
+            args,
+        },
+        "set" | "builtins.set" | "Set" | "typing.Set" => CanonicalType::Nominal {
+            fqname: "builtins.set".to_string(),
+            args,
+        },
+        "frozenset" | "builtins.frozenset" | "FrozenSet" | "typing.FrozenSet" => {
+            CanonicalType::Nominal {
+                fqname: "builtins.frozenset".to_string(),
+                args,
+            }
+        }
+        "list" | "builtins.list" | "List" | "typing.List" => CanonicalType::Nominal {
+            fqname: "builtins.list".to_string(),
+            args,
+        },
+        "dict" | "builtins.dict" | "Dict" | "typing.Dict" => CanonicalType::Nominal {
+            fqname: "builtins.dict".to_string(),
+            args,
+        },
+        "tuple" | "builtins.tuple" | "Tuple" | "typing.Tuple" | "typing_extensions.Tuple" => {
+            CanonicalType::Nominal {
+                fqname: "builtins.tuple".to_string(),
+                args,
+            }
+        }
+        "Sequence"
+        | "builtins.Sequence"
+        | "typing.Sequence"
+        | "collections.abc.Sequence"
+        | "typing_extensions.Sequence" => CanonicalType::Nominal {
+            fqname: "builtins.Sequence".to_string(),
+            args,
+        },
+        "MutableSequence"
+        | "builtins.MutableSequence"
+        | "typing.MutableSequence"
+        | "collections.abc.MutableSequence" => CanonicalType::Nominal {
+            fqname: "collections.abc.MutableSequence".to_string(),
+            args,
+        },
+        "Collection"
+        | "builtins.Collection"
+        | "typing.Collection"
+        | "collections.abc.Collection" => CanonicalType::Nominal {
+            fqname: "collections.abc.Collection".to_string(),
+            args,
+        },
+        "Iterable" | "builtins.Iterable" | "typing.Iterable" | "collections.abc.Iterable" => {
+            CanonicalType::Nominal {
+                fqname: "collections.abc.Iterable".to_string(),
+                args,
+            }
+        }
+        "Reversible" | "typing.Reversible" | "collections.abc.Reversible" => {
+            CanonicalType::Nominal {
+                fqname: "collections.abc.Reversible".to_string(),
+                args,
+            }
+        }
+        "AbstractSet" | "typing.AbstractSet" | "collections.abc.Set" => CanonicalType::Nominal {
+            fqname: "collections.abc.Set".to_string(),
+            args,
+        },
+        "MutableSet" | "typing.MutableSet" | "collections.abc.MutableSet" => {
+            CanonicalType::Nominal {
+                fqname: "collections.abc.MutableSet".to_string(),
+                args,
+            }
+        }
+        "Mapping" | "typing.Mapping" | "collections.abc.Mapping" => CanonicalType::Nominal {
+            fqname: "collections.abc.Mapping".to_string(),
+            args,
+        },
+        "MutableMapping" | "typing.MutableMapping" | "collections.abc.MutableMapping" => {
+            CanonicalType::Nominal {
+                fqname: "collections.abc.MutableMapping".to_string(),
+                args,
+            }
+        }
+        other => CanonicalType::Nominal {
+            fqname: other.to_string(),
+            args,
+        },
+    }
+}
+
+pub fn parse_bare_nominal_or_primitive(trimmed: &str) -> CanonicalType {
+    match trimmed {
+        "int" | "builtins.int" => CanonicalType::Primitive(PrimitiveKind::Int),
+        "str"
+        | "builtins.str"
+        | "LiteralString"
+        | "typing.LiteralString"
+        | "typing_extensions.LiteralString" => CanonicalType::Primitive(PrimitiveKind::Str),
+        "float" | "builtins.float" => CanonicalType::Primitive(PrimitiveKind::Float),
+        "bool" | "builtins.bool" => CanonicalType::Primitive(PrimitiveKind::Bool),
+        "bytes" | "builtins.bytes" => CanonicalType::Primitive(PrimitiveKind::Bytes),
+        "type" | "builtins.type" | "Type" | "typing.Type" => CanonicalType::Nominal {
+            fqname: "builtins.type".to_string(),
+            args: Vec::new(),
+        },
+        "set" | "builtins.set" | "Set" | "typing.Set" => CanonicalType::Nominal {
+            fqname: "builtins.set".to_string(),
+            args: Vec::new(),
+        },
+        "frozenset" | "builtins.frozenset" | "FrozenSet" | "typing.FrozenSet" => {
+            CanonicalType::Nominal {
+                fqname: "builtins.frozenset".to_string(),
+                args: Vec::new(),
+            }
+        }
+        "list" | "builtins.list" | "List" | "typing.List" => CanonicalType::Nominal {
+            fqname: "builtins.list".to_string(),
+            args: Vec::new(),
+        },
+        "dict" | "builtins.dict" | "Dict" | "typing.Dict" => CanonicalType::Nominal {
+            fqname: "builtins.dict".to_string(),
+            args: Vec::new(),
+        },
+        "tuple" | "builtins.tuple" | "Tuple" | "typing.Tuple" | "typing_extensions.Tuple" => {
+            CanonicalType::Nominal {
+                fqname: "builtins.tuple".to_string(),
+                args: Vec::new(),
+            }
+        }
+        "Sequence"
+        | "builtins.Sequence"
+        | "typing.Sequence"
+        | "collections.abc.Sequence"
+        | "typing_extensions.Sequence" => CanonicalType::Nominal {
+            fqname: "builtins.Sequence".to_string(),
+            args: Vec::new(),
+        },
+        "MutableSequence"
+        | "builtins.MutableSequence"
+        | "typing.MutableSequence"
+        | "collections.abc.MutableSequence" => CanonicalType::Nominal {
+            fqname: "collections.abc.MutableSequence".to_string(),
+            args: Vec::new(),
+        },
+        "Collection"
+        | "builtins.Collection"
+        | "typing.Collection"
+        | "collections.abc.Collection" => CanonicalType::Nominal {
+            fqname: "collections.abc.Collection".to_string(),
+            args: Vec::new(),
+        },
+        "Iterable" | "builtins.Iterable" | "typing.Iterable" | "collections.abc.Iterable" => {
+            CanonicalType::Nominal {
+                fqname: "collections.abc.Iterable".to_string(),
+                args: Vec::new(),
+            }
+        }
+        "Reversible" | "typing.Reversible" | "collections.abc.Reversible" => {
+            CanonicalType::Nominal {
+                fqname: "collections.abc.Reversible".to_string(),
+                args: Vec::new(),
+            }
+        }
+        "AbstractSet" | "typing.AbstractSet" | "collections.abc.Set" => CanonicalType::Nominal {
+            fqname: "collections.abc.Set".to_string(),
+            args: Vec::new(),
+        },
+        "MutableSet" | "typing.MutableSet" | "collections.abc.MutableSet" => {
+            CanonicalType::Nominal {
+                fqname: "collections.abc.MutableSet".to_string(),
+                args: Vec::new(),
+            }
+        }
+        "Mapping" | "typing.Mapping" | "collections.abc.Mapping" => CanonicalType::Nominal {
+            fqname: "collections.abc.Mapping".to_string(),
+            args: Vec::new(),
+        },
+        "MutableMapping" | "typing.MutableMapping" | "collections.abc.MutableMapping" => {
+            CanonicalType::Nominal {
+                fqname: "collections.abc.MutableMapping".to_string(),
+                args: Vec::new(),
+            }
+        }
+        "UUID" | "uuid.UUID" => CanonicalType::Nominal {
+            fqname: "uuid.UUID".to_string(),
+            args: Vec::new(),
+        },
+        other => CanonicalType::Nominal {
+            fqname: other.to_string(),
+            args: Vec::new(),
+        },
+    }
+}
+
+pub fn strip_balanced_outer_parens(raw: &str) -> &str {
+    let mut cur = raw.trim();
+    while cur.len() > 2 && cur.starts_with('(') && cur.ends_with(')') {
+        let bytes = cur.as_bytes();
+        let mut depth = 0i32;
+        let mut in_quote: Option<u8> = None;
+        let mut outer_wraps_all = true;
+        let mut idx = 0usize;
+        while idx < bytes.len() {
+            let b = bytes[idx];
+            if let Some(q) = in_quote {
+                if b == b'\\' {
+                    idx += 2;
+                    continue;
+                }
+                if b == q {
+                    in_quote = None;
+                }
+                idx += 1;
+                continue;
+            }
+            match b {
+                b'\'' | b'"' => in_quote = Some(b),
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    depth -= 1;
+                    if depth == 0 && idx + 1 < bytes.len() {
+                        outer_wraps_all = false;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            idx += 1;
+        }
+        if outer_wraps_all && depth == 0 {
+            cur = cur[1..cur.len() - 1].trim();
+        } else {
+            break;
+        }
+    }
+    cur
+}
+
+pub fn split_top_level_type_pipe(s: &str) -> Option<Vec<&str>> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut in_quote: Option<u8> = None;
+    let bytes = s.as_bytes();
+    let mut last = 0usize;
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        let b = bytes[idx];
+        if let Some(q) = in_quote {
+            if b == b'\\' {
+                idx += 2;
+                continue;
+            }
+            if b == q {
+                in_quote = None;
+            }
+            idx += 1;
+            continue;
+        }
+        match b {
+            b'\'' | b'"' => in_quote = Some(b),
+            b'[' | b'(' | b'{' => depth += 1,
+            b']' | b')' | b'}' => depth -= 1,
+            b'|' if depth == 0 => {
+                parts.push(s[last..idx].trim());
+                last = idx + 1;
+            }
+            _ => {}
+        }
+        idx += 1;
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        parts.push(s[last..].trim());
+        Some(parts)
+    }
+}
+
+/// Splits top-level comma-separated type arguments while preserving `"..."` (`Ellipsis`) tokens.
+pub fn split_top_level_type_commas(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut in_quote: Option<u8> = None;
+    let bytes = s.as_bytes();
+    let mut last = 0usize;
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        let b = bytes[idx];
+        if let Some(q) = in_quote {
+            if b == b'\\' {
+                idx += 2;
+                continue;
+            }
+            if b == q {
+                in_quote = None;
+            }
+            idx += 1;
+            continue;
+        }
+        match b {
+            b'\'' | b'"' => in_quote = Some(b),
+            b'[' | b'(' | b'{' => depth += 1,
+            b']' | b')' | b'}' => depth -= 1,
+            b',' if depth == 0 => {
+                let seg = s[last..idx].trim();
+                if !seg.is_empty() {
+                    parts.push(seg);
+                }
+                last = idx + 1;
+            }
+            _ => {}
+        }
+        idx += 1;
+    }
+    let tail = s[last..].trim();
+    if !tail.is_empty() {
+        parts.push(tail);
+    }
+    parts
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -608,8 +994,32 @@ pub enum TriState {
     Unknown,
 }
 
+impl TriState {
+    pub const fn and(self, other: TriState) -> TriState {
+        match (self, other) {
+            (TriState::No, _) | (_, TriState::No) => TriState::No,
+            (TriState::Unknown, _) | (_, TriState::Unknown) => TriState::Unknown,
+            (TriState::Yes, TriState::Yes) => TriState::Yes,
+        }
+    }
+}
+
 /// Deterministic Kleene 3-valued subtype evaluator enforcing `R03` (Zero-False-Positive Soundness).
 pub fn eval_is_subtype(sub: &CanonicalType, sup: &CanonicalType) -> TriState {
+    eval_is_subtype_with(sub, sup, &mut |_, _| TriState::Unknown)
+}
+
+/// Parameterized Kleene 3-valued subtype evaluator sharing exact Union, tuple (fixed & variadic),
+/// and covariant stdlib ABC (`Sequence`/`Collection`/`Iterable`/`Mapping`/`AbstractSet`) rules across
+/// pure `riffty_core` and MRO-backed `TypeOraclePort` adapters.
+pub fn eval_is_subtype_with<F>(
+    sub: &CanonicalType,
+    sup: &CanonicalType,
+    leaf_oracle: &mut F,
+) -> TriState
+where
+    F: FnMut(&CanonicalType, &CanonicalType) -> TriState,
+{
     if sub.is_unknown_or_any() || sup.is_unknown_or_any() {
         return TriState::Unknown;
     }
@@ -621,24 +1031,22 @@ pub fn eval_is_subtype(sub: &CanonicalType, sup: &CanonicalType) -> TriState {
             if sub_members.is_empty() {
                 return TriState::Unknown;
             }
-            let mut saw_unknown = false;
+            let mut acc = TriState::Yes;
             for m in sub_members {
-                match eval_is_subtype(m, sup) {
-                    TriState::Yes => {}
-                    TriState::No => return TriState::No,
-                    TriState::Unknown => saw_unknown = true,
+                acc = acc.and(eval_is_subtype_with(m, sup, leaf_oracle));
+                if acc == TriState::No {
+                    return TriState::No;
                 }
             }
-            if saw_unknown {
-                TriState::Unknown
-            } else {
-                TriState::Yes
-            }
+            acc
         }
         (_, CanonicalType::Union(sup_members)) => {
+            if sup_members.is_empty() {
+                return TriState::Unknown;
+            }
             let mut saw_unknown = false;
             for m in sup_members {
-                match eval_is_subtype(sub, m) {
+                match eval_is_subtype_with(sub, m, leaf_oracle) {
                     TriState::Yes => return TriState::Yes,
                     TriState::Unknown => saw_unknown = true,
                     TriState::No => {}
@@ -650,8 +1058,16 @@ pub fn eval_is_subtype(sub: &CanonicalType, sup: &CanonicalType) -> TriState {
                 TriState::No
             }
         }
+        (_, CanonicalType::Nominal { fqname, args })
+            if (fqname == "builtins.object" || fqname == "object") && args.is_empty() =>
+        {
+            TriState::Yes
+        }
         // PEP 484 / Python runtime subclassing: bool <: int, and int <: float in PEP 484 type tower
-        (CanonicalType::Primitive(PrimitiveKind::Bool), CanonicalType::Primitive(PrimitiveKind::Int))
+        (
+            CanonicalType::Primitive(PrimitiveKind::Bool),
+            CanonicalType::Primitive(PrimitiveKind::Int),
+        )
         | (
             CanonicalType::Primitive(PrimitiveKind::Bool),
             CanonicalType::Primitive(PrimitiveKind::Float),
@@ -662,27 +1078,117 @@ pub fn eval_is_subtype(sub: &CanonicalType, sup: &CanonicalType) -> TriState {
         ) => TriState::Yes,
         (CanonicalType::Primitive(_), CanonicalType::Primitive(_)) => TriState::No,
         (CanonicalType::NoneType, _) | (_, CanonicalType::NoneType) => TriState::No,
-        (CanonicalType::Primitive(p), CanonicalType::Nominal { fqname, args }) => {
-            if fqname == "builtins.object"
-                || fqname == "object"
-                || (p.fqname() == fqname && args.is_empty())
+        // Variadic homogeneous tuple `tuple[T, ...]` subtyping
+        (CanonicalType::VariadicTuple(sub_elem), CanonicalType::VariadicTuple(sup_elem)) => {
+            eval_is_subtype_with(sub_elem, sup_elem, leaf_oracle)
+        }
+        (
+            CanonicalType::Nominal {
+                fqname: sub_fq,
+                args: sub_args,
+            },
+            CanonicalType::VariadicTuple(sup_elem),
+        ) => {
+            let sub_key = canonical_nominal_key(sub_fq);
+            if sub_key == "tuple" {
+                if sub_args.is_empty() {
+                    if matches!(
+                        sup_elem.as_ref(),
+                        CanonicalType::Nominal { fqname, args }
+                            if (fqname == "builtins.object" || fqname == "object") && args.is_empty()
+                    ) {
+                        TriState::Yes
+                    } else {
+                        TriState::Unknown
+                    }
+                } else {
+                    eval_all_subtypes(sub_args, sup_elem, leaf_oracle)
+                }
+            } else if is_builtin_closed_container_key(sub_key)
+                || is_stdlib_collection_abc_key(sub_key)
             {
-                TriState::Yes
-            } else if is_builtin_closed_container_fqn(fqname) {
+                TriState::No
+            } else {
+                leaf_oracle(sub, sup)
+            }
+        }
+        (
+            CanonicalType::VariadicTuple(sub_elem),
+            CanonicalType::Nominal {
+                fqname: sup_fq,
+                args: sup_args,
+            },
+        ) => {
+            let sup_key = canonical_nominal_key(sup_fq);
+            match sup_key {
+                "tuple" => {
+                    if sup_args.is_empty() {
+                        TriState::Yes
+                    } else if sub_elem.is_unknown_or_any() {
+                        TriState::Unknown
+                    } else {
+                        TriState::No
+                    }
+                }
+                "collections.abc.Sequence"
+                | "collections.abc.Reversible"
+                | "collections.abc.Collection"
+                | "collections.abc.Iterable" => {
+                    eval_single_arg_covariant_super(sub_elem, sup_args, leaf_oracle)
+                }
+                _ if is_builtin_closed_container_key(sup_key)
+                    || is_stdlib_collection_abc_key(sup_key) =>
+                {
+                    TriState::No
+                }
+                _ => leaf_oracle(sub, sup),
+            }
+        }
+        (CanonicalType::VariadicTuple(_), CanonicalType::Primitive(_))
+        | (CanonicalType::Primitive(_), CanonicalType::VariadicTuple(_))
+        | (CanonicalType::VariadicTuple(_), CanonicalType::Callable { .. })
+        | (CanonicalType::Callable { .. }, CanonicalType::VariadicTuple(_)) => TriState::No,
+        (CanonicalType::Primitive(p), CanonicalType::Nominal { fqname, args }) => {
+            if p.fqname() == fqname && args.is_empty() {
+                return TriState::Yes;
+            }
+            let sup_key = canonical_nominal_key(fqname);
+            if matches!(
+                sup_key,
+                "collections.abc.Sequence"
+                    | "collections.abc.Reversible"
+                    | "collections.abc.Collection"
+                    | "collections.abc.Iterable"
+            ) {
+                match p {
+                    PrimitiveKind::Str => {
+                        let elem = CanonicalType::Primitive(PrimitiveKind::Str);
+                        return eval_single_arg_covariant_super(&elem, args, leaf_oracle);
+                    }
+                    PrimitiveKind::Bytes => {
+                        let elem = CanonicalType::Primitive(PrimitiveKind::Int);
+                        return eval_single_arg_covariant_super(&elem, args, leaf_oracle);
+                    }
+                    _ => return TriState::No,
+                }
+            }
+            if is_builtin_closed_container_key(sup_key) || is_stdlib_collection_abc_key(sup_key) {
                 TriState::No
             } else {
                 // Without MRO knowledge, `fqname` could be an ABC/Protocol/supertype (`R18`)
-                TriState::Unknown
+                leaf_oracle(sub, sup)
             }
         }
         (CanonicalType::Nominal { fqname, args }, CanonicalType::Primitive(p)) => {
             if p.fqname() == fqname && args.is_empty() {
-                TriState::Yes
-            } else if is_builtin_closed_container_fqn(fqname) {
+                return TriState::Yes;
+            }
+            let sub_key = canonical_nominal_key(fqname);
+            if is_builtin_closed_container_key(sub_key) || is_stdlib_collection_abc_key(sub_key) {
                 TriState::No
             } else {
                 // Without MRO knowledge, `fqname` could subclass `p` (e.g. `class Rule(str, Enum)`) (`R18`)
-                TriState::Unknown
+                leaf_oracle(sub, sup)
             }
         }
         (
@@ -695,51 +1201,298 @@ pub fn eval_is_subtype(sub: &CanonicalType, sup: &CanonicalType) -> TriState {
                 args: sup_args,
             },
         ) => {
-            if sup_fq == "builtins.object" || sup_fq == "object" {
-                return TriState::Yes;
-            }
-            if normalize_fqn(sub_fq) == normalize_fqn(sup_fq) {
-                if sup_args.is_empty() || sub_args.is_empty() {
+            let sub_key = canonical_nominal_key(sub_fq);
+            let sup_key = canonical_nominal_key(sup_fq);
+            if sub_key == sup_key {
+                if sup_args.is_empty() {
                     return TriState::Yes;
+                }
+                if sub_args.is_empty() {
+                    return TriState::Unknown;
                 }
                 if sub_args.len() != sup_args.len() {
                     return TriState::No;
                 }
-                let mut saw_unknown = false;
+                let mut acc = TriState::Yes;
                 for (a, b) in sub_args.iter().zip(sup_args.iter()) {
-                    match eval_is_subtype(a, b) {
-                        TriState::Yes => {}
-                        TriState::No => return TriState::No,
-                        TriState::Unknown => saw_unknown = true,
+                    acc = acc.and(eval_is_subtype_with(a, b, leaf_oracle));
+                    if acc == TriState::No {
+                        return TriState::No;
                     }
                 }
-                if saw_unknown {
-                    TriState::Unknown
-                } else {
-                    TriState::Yes
-                }
-            } else if is_builtin_closed_container_fqn(sub_fq)
-                && is_builtin_closed_container_fqn(sup_fq)
+                return acc;
+            }
+
+            if let Some(res) =
+                eval_stdlib_container_hierarchy(sub_key, sub_args, sup_key, sup_args, leaf_oracle)
             {
+                return res;
+            }
+
+            // Distinct nominals without MRO context may be in an inheritance relation (`R18`)
+            leaf_oracle(sub, sup)
+        }
+        (CanonicalType::Nominal { fqname, .. }, CanonicalType::Callable { .. }) => {
+            let sub_key = canonical_nominal_key(fqname);
+            if is_builtin_closed_container_key(sub_key) && sub_key != "type" {
                 TriState::No
             } else {
-                // Distinct nominals without MRO context may be in an inheritance relation (`R18`)
+                // A class (or `builtins.type`) may implement `__call__`
                 TriState::Unknown
             }
-        }
-        (CanonicalType::Nominal { .. }, CanonicalType::Callable { .. }) => {
-            // A class may implement `__call__`
-            TriState::Unknown
         }
         _ => TriState::No,
     }
 }
 
-fn is_builtin_closed_container_fqn(fqn: &str) -> bool {
+fn eval_all_subtypes<F>(
+    items: &[CanonicalType],
+    target: &CanonicalType,
+    leaf_oracle: &mut F,
+) -> TriState
+where
+    F: FnMut(&CanonicalType, &CanonicalType) -> TriState,
+{
+    let mut acc = TriState::Yes;
+    for item in items {
+        acc = acc.and(eval_is_subtype_with(item, target, leaf_oracle));
+        if acc == TriState::No {
+            return TriState::No;
+        }
+    }
+    acc
+}
+
+fn eval_single_arg_covariant_super<F>(
+    sub_elem: &CanonicalType,
+    sup_args: &[CanonicalType],
+    leaf_oracle: &mut F,
+) -> TriState
+where
+    F: FnMut(&CanonicalType, &CanonicalType) -> TriState,
+{
+    if sup_args.is_empty() {
+        TriState::Yes
+    } else if sup_args.len() == 1 {
+        eval_is_subtype_with(sub_elem, &sup_args[0], leaf_oracle)
+    } else {
+        TriState::No
+    }
+}
+
+fn eval_single_arg_invariant_super<F>(
+    sub_args: &[CanonicalType],
+    sup_args: &[CanonicalType],
+    leaf_oracle: &mut F,
+) -> TriState
+where
+    F: FnMut(&CanonicalType, &CanonicalType) -> TriState,
+{
+    if sup_args.is_empty() {
+        TriState::Yes
+    } else if sub_args.is_empty() {
+        TriState::Unknown
+    } else if sub_args.len() == 1 && sup_args.len() == 1 {
+        eval_is_subtype_with(&sub_args[0], &sup_args[0], leaf_oracle).and(eval_is_subtype_with(
+            &sup_args[0],
+            &sub_args[0],
+            leaf_oracle,
+        ))
+    } else {
+        TriState::No
+    }
+}
+
+fn eval_stdlib_container_hierarchy<F>(
+    sub_key: &str,
+    sub_args: &[CanonicalType],
+    sup_key: &str,
+    sup_args: &[CanonicalType],
+    leaf_oracle: &mut F,
+) -> Option<TriState>
+where
+    F: FnMut(&CanonicalType, &CanonicalType) -> TriState,
+{
+    let sub_is_stdlib =
+        is_builtin_closed_container_key(sub_key) || is_stdlib_collection_abc_key(sub_key);
+    let sup_is_stdlib =
+        is_builtin_closed_container_key(sup_key) || is_stdlib_collection_abc_key(sup_key);
+    if !sub_is_stdlib || !sup_is_stdlib {
+        return None;
+    }
+
+    let res = match (sub_key, sup_key) {
+        (
+            "tuple",
+            "collections.abc.Sequence"
+            | "collections.abc.Reversible"
+            | "collections.abc.Collection"
+            | "collections.abc.Iterable",
+        ) => {
+            if sup_args.is_empty() {
+                TriState::Yes
+            } else if sub_args.is_empty() {
+                TriState::Unknown
+            } else if sup_args.len() == 1 {
+                eval_all_subtypes(sub_args, &sup_args[0], leaf_oracle)
+            } else {
+                TriState::No
+            }
+        }
+        ("list", "collections.abc.MutableSequence") => {
+            eval_single_arg_invariant_super(sub_args, sup_args, leaf_oracle)
+        }
+        (
+            "list" | "collections.abc.MutableSequence",
+            "collections.abc.Sequence"
+            | "collections.abc.Reversible"
+            | "collections.abc.Collection"
+            | "collections.abc.Iterable",
+        )
+        | (
+            "collections.abc.Sequence",
+            "collections.abc.Reversible"
+            | "collections.abc.Collection"
+            | "collections.abc.Iterable",
+        )
+        | ("collections.abc.Reversible", "collections.abc.Iterable")
+        | (
+            "set" | "frozenset" | "collections.abc.MutableSet",
+            "collections.abc.Set" | "collections.abc.Collection" | "collections.abc.Iterable",
+        )
+        | ("collections.abc.Set", "collections.abc.Collection" | "collections.abc.Iterable")
+        | ("collections.abc.Collection", "collections.abc.Iterable") => {
+            if sup_args.is_empty() {
+                TriState::Yes
+            } else if sub_args.is_empty() {
+                TriState::Unknown
+            } else if sub_args.len() == 1 && sup_args.len() == 1 {
+                eval_is_subtype_with(&sub_args[0], &sup_args[0], leaf_oracle)
+            } else {
+                TriState::No
+            }
+        }
+        ("set", "collections.abc.MutableSet") => {
+            eval_single_arg_invariant_super(sub_args, sup_args, leaf_oracle)
+        }
+        ("dict", "collections.abc.MutableMapping") => {
+            if sup_args.is_empty() {
+                TriState::Yes
+            } else if sub_args.is_empty() {
+                TriState::Unknown
+            } else if sub_args.len() == 2 && sup_args.len() == 2 {
+                let k = eval_is_subtype_with(&sub_args[0], &sup_args[0], leaf_oracle).and(
+                    eval_is_subtype_with(&sup_args[0], &sub_args[0], leaf_oracle),
+                );
+                let v = eval_is_subtype_with(&sub_args[1], &sup_args[1], leaf_oracle).and(
+                    eval_is_subtype_with(&sup_args[1], &sub_args[1], leaf_oracle),
+                );
+                k.and(v)
+            } else {
+                TriState::No
+            }
+        }
+        ("dict" | "collections.abc.MutableMapping", "collections.abc.Mapping") => {
+            if sup_args.is_empty() {
+                TriState::Yes
+            } else if sub_args.is_empty() {
+                TriState::Unknown
+            } else if sub_args.len() == 2 && sup_args.len() == 2 {
+                let k = eval_is_subtype_with(&sub_args[0], &sup_args[0], leaf_oracle).and(
+                    eval_is_subtype_with(&sup_args[0], &sub_args[0], leaf_oracle),
+                );
+                let v = eval_is_subtype_with(&sub_args[1], &sup_args[1], leaf_oracle);
+                k.and(v)
+            } else {
+                TriState::No
+            }
+        }
+        (
+            "dict" | "collections.abc.MutableMapping" | "collections.abc.Mapping",
+            "collections.abc.Collection" | "collections.abc.Iterable",
+        )
+        | ("dict", "collections.abc.Reversible") => {
+            if sup_args.is_empty() {
+                TriState::Yes
+            } else if sub_args.is_empty() {
+                TriState::Unknown
+            } else if sup_args.len() == 1 {
+                eval_is_subtype_with(&sub_args[0], &sup_args[0], leaf_oracle)
+            } else {
+                TriState::No
+            }
+        }
+        _ => TriState::No,
+    };
+
+    Some(res)
+}
+
+fn canonical_nominal_key(fqn: &str) -> &str {
+    match fqn {
+        "tuple" | "builtins.tuple" | "Tuple" | "typing.Tuple" | "typing_extensions.Tuple" => {
+            "tuple"
+        }
+        "list" | "builtins.list" | "List" | "typing.List" => "list",
+        "set" | "builtins.set" | "Set" | "typing.Set" => "set",
+        "frozenset" | "builtins.frozenset" | "FrozenSet" | "typing.FrozenSet" => "frozenset",
+        "dict" | "builtins.dict" | "Dict" | "typing.Dict" => "dict",
+        "type" | "builtins.type" | "Type" | "typing.Type" => "type",
+        "Sequence"
+        | "builtins.Sequence"
+        | "typing.Sequence"
+        | "collections.abc.Sequence"
+        | "typing_extensions.Sequence" => "collections.abc.Sequence",
+        "MutableSequence"
+        | "builtins.MutableSequence"
+        | "typing.MutableSequence"
+        | "collections.abc.MutableSequence" => "collections.abc.MutableSequence",
+        "Collection"
+        | "builtins.Collection"
+        | "typing.Collection"
+        | "collections.abc.Collection" => "collections.abc.Collection",
+        "Iterable" | "builtins.Iterable" | "typing.Iterable" | "collections.abc.Iterable" => {
+            "collections.abc.Iterable"
+        }
+        "Reversible" | "typing.Reversible" | "collections.abc.Reversible" => {
+            "collections.abc.Reversible"
+        }
+        "AbstractSet" | "typing.AbstractSet" | "collections.abc.Set" => "collections.abc.Set",
+        "MutableSet" | "typing.MutableSet" | "collections.abc.MutableSet" => {
+            "collections.abc.MutableSet"
+        }
+        "Mapping" | "typing.Mapping" | "collections.abc.Mapping" => "collections.abc.Mapping",
+        "MutableMapping" | "typing.MutableMapping" | "collections.abc.MutableMapping" => {
+            "collections.abc.MutableMapping"
+        }
+        other => other.strip_prefix("builtins.").unwrap_or(other),
+    }
+}
+
+fn is_builtin_closed_container_key(key: &str) -> bool {
     matches!(
-        normalize_fqn(fqn),
+        key,
         "list" | "set" | "frozenset" | "dict" | "tuple" | "type"
     )
+}
+
+fn is_stdlib_collection_abc_key(key: &str) -> bool {
+    matches!(
+        key,
+        "collections.abc.Sequence"
+            | "collections.abc.MutableSequence"
+            | "collections.abc.Collection"
+            | "collections.abc.Iterable"
+            | "collections.abc.Reversible"
+            | "collections.abc.Set"
+            | "collections.abc.MutableSet"
+            | "collections.abc.Mapping"
+            | "collections.abc.MutableMapping"
+    )
+}
+
+fn is_builtin_closed_container_fqn(fqn: &str) -> bool {
+    is_builtin_closed_container_key(canonical_nominal_key(fqn))
 }
 
 /// Default conservative custom-equality check (`R13`, `R18`) when no MRO oracle is available.
@@ -747,7 +1500,8 @@ pub fn eval_has_custom_eq_default(ty: &CanonicalType) -> TriState {
     match ty {
         CanonicalType::Primitive(_)
         | CanonicalType::NoneType
-        | CanonicalType::Callable { .. } => TriState::No,
+        | CanonicalType::Callable { .. }
+        | CanonicalType::VariadicTuple(_) => TriState::No,
         CanonicalType::Nominal { fqname, .. } if is_builtin_closed_container_fqn(fqname) => {
             TriState::No
         }
@@ -802,6 +1556,41 @@ pub fn are_types_provably_disjoint(
         {
             false
         }
+        (CanonicalType::VariadicTuple(t), CanonicalType::VariadicTuple(u)) => {
+            are_types_provably_disjoint(t, u, oracle)
+        }
+        (CanonicalType::VariadicTuple(elem), CanonicalType::Nominal { fqname, args })
+        | (CanonicalType::Nominal { fqname, args }, CanonicalType::VariadicTuple(elem))
+            if canonical_nominal_key(fqname) == "tuple" =>
+        {
+            if args.is_empty() {
+                false
+            } else {
+                args.iter()
+                    .any(|arg| are_types_provably_disjoint(arg, elem, oracle))
+            }
+        }
+        (
+            CanonicalType::Nominal {
+                fqname: fq1,
+                args: args1,
+            },
+            CanonicalType::Nominal {
+                fqname: fq2,
+                args: args2,
+            },
+        ) if canonical_nominal_key(fq1) == "tuple" && canonical_nominal_key(fq2) == "tuple" => {
+            if args1.is_empty() || args2.is_empty() {
+                false
+            } else if args1.len() != args2.len() {
+                true
+            } else {
+                args1
+                    .iter()
+                    .zip(args2.iter())
+                    .any(|(a, b)| are_types_provably_disjoint(a, b, oracle))
+            }
+        }
         _ => {
             oracle.is_subtype(lhs, rhs) == TriState::No
                 && oracle.is_subtype(rhs, lhs) == TriState::No
@@ -809,10 +1598,6 @@ pub fn are_types_provably_disjoint(
                 && oracle.has_custom_eq(rhs) == TriState::No
         }
     }
-}
-
-fn normalize_fqn(fqn: &str) -> &str {
-    fqn.strip_prefix("builtins.").unwrap_or(fqn)
 }
 
 /// Open-world polymorphic method-dispatch risk classification (`R17`).
@@ -1050,10 +1835,24 @@ mod tests {
         let float_ty = CanonicalType::Primitive(PrimitiveKind::Float);
         let bool_ty = CanonicalType::Primitive(PrimitiveKind::Bool);
 
-        assert_eq!(eval_is_subtype(&CanonicalType::Unknown, &int_ty), TriState::Unknown);
-        assert_eq!(eval_is_subtype(&int_ty, &CanonicalType::Any), TriState::Unknown);
-        assert!(!are_types_provably_disjoint(&CanonicalType::Unknown, &str_ty, &oracle));
-        assert!(!are_types_provably_disjoint(&CanonicalType::Any, &str_ty, &oracle));
+        assert_eq!(
+            eval_is_subtype(&CanonicalType::Unknown, &int_ty),
+            TriState::Unknown
+        );
+        assert_eq!(
+            eval_is_subtype(&int_ty, &CanonicalType::Any),
+            TriState::Unknown
+        );
+        assert!(!are_types_provably_disjoint(
+            &CanonicalType::Unknown,
+            &str_ty,
+            &oracle
+        ));
+        assert!(!are_types_provably_disjoint(
+            &CanonicalType::Any,
+            &str_ty,
+            &oracle
+        ));
 
         // Disjoint concrete types: int vs str
         assert!(are_types_provably_disjoint(&int_ty, &str_ty, &oracle));
@@ -1101,7 +1900,11 @@ mod tests {
             eval_is_subtype(&rule_enum_ty, &other_cls_ty),
             TriState::Unknown
         );
-        assert!(!are_types_provably_disjoint(&rule_enum_ty, &str_ty, &oracle));
+        assert!(!are_types_provably_disjoint(
+            &rule_enum_ty,
+            &str_ty,
+            &oracle
+        ));
         assert!(!are_types_provably_disjoint(
             &rule_enum_ty,
             &other_cls_ty,
@@ -1161,5 +1964,111 @@ mod tests {
         for (idx, kind) in NodeKind::ALL.iter().copied().enumerate() {
             assert_eq!(kind.as_index(), idx);
         }
+    }
+
+    #[test]
+    fn issue_6_variadic_tuple_representation_subtyping_disjointness_and_covariant_abcs() {
+        let oracle = DummyOracle;
+        let str_ty = CanonicalType::Primitive(PrimitiveKind::Str);
+        let int_ty = CanonicalType::Primitive(PrimitiveKind::Int);
+        let float_ty = CanonicalType::Primitive(PrimitiveKind::Float);
+        let bool_ty = CanonicalType::Primitive(PrimitiveKind::Bool);
+
+        let var_str = CanonicalType::parse_type_expr("tuple[str, ...]");
+        assert_eq!(
+            var_str,
+            CanonicalType::VariadicTuple(Box::new(str_ty.clone()))
+        );
+        assert_eq!(var_str.display_short(), "tuple[str, ...]");
+        assert_eq!(var_str.container_element_type(), Some(str_ty.clone()));
+        assert_eq!(var_str.subscript_value_type(), Some(str_ty.clone()));
+
+        let nested_list = CanonicalType::parse_type_expr("list[tuple[str, ...]]");
+        assert_eq!(nested_list.display_short(), "list[tuple[str, ...]]");
+        assert_eq!(nested_list.container_element_type(), Some(var_str.clone()));
+
+        let fixed_1_int = CanonicalType::parse_type_expr("tuple[int]");
+        assert_eq!(fixed_1_int.display_short(), "tuple[int]");
+        let fixed_2_int = CanonicalType::parse_type_expr("tuple[int, int]");
+        let fixed_4_str = CanonicalType::parse_type_expr("tuple[str, str, str, str]");
+        let fixed_3_int = CanonicalType::parse_type_expr("tuple[int, int, int]");
+        let var_float = CanonicalType::parse_type_expr("Tuple[float, ...]");
+        let var_bool = CanonicalType::parse_type_expr("tuple[bool, ...]");
+
+        // Subtyping: fixed-arity <: variadic iff all Ti <: U
+        assert_eq!(eval_is_subtype(&fixed_4_str, &var_str), TriState::Yes);
+        assert_eq!(eval_is_subtype(&fixed_2_int, &var_float), TriState::Yes);
+        assert_eq!(eval_is_subtype(&fixed_3_int, &var_str), TriState::No);
+        // Variadic is NOT a subtype of fixed-arity
+        assert_eq!(eval_is_subtype(&var_str, &fixed_4_str), TriState::No);
+        assert_eq!(eval_is_subtype(&var_float, &fixed_1_int), TriState::No);
+        // Variadic <: Variadic is covariant
+        assert_eq!(eval_is_subtype(&var_bool, &var_float), TriState::Yes);
+        assert_eq!(eval_is_subtype(&var_float, &var_str), TriState::No);
+
+        // Disjointness: openshift/lightspeed-service 4-tuple vs tuple[str, ...]
+        assert!(!are_types_provably_disjoint(
+            &fixed_4_str,
+            &var_str,
+            &oracle
+        ));
+        assert!(!are_types_provably_disjoint(
+            &var_str,
+            &fixed_4_str,
+            &oracle
+        ));
+        assert!(are_types_provably_disjoint(&fixed_3_int, &var_str, &oracle));
+        assert!(are_types_provably_disjoint(
+            &fixed_2_int,
+            &fixed_1_int,
+            &oracle
+        ));
+
+        // Overlap without subtyping: tuple[int | str, str] vs tuple[str, ...] is NOT disjoint
+        let union_pair = CanonicalType::Nominal {
+            fqname: "builtins.tuple".to_string(),
+            args: vec![
+                CanonicalType::Union(vec![int_ty.clone(), str_ty.clone()]),
+                str_ty.clone(),
+            ],
+        };
+        assert_eq!(eval_is_subtype(&union_pair, &var_str), TriState::No);
+        assert_eq!(eval_is_subtype(&var_str, &union_pair), TriState::No);
+        assert!(!are_types_provably_disjoint(&union_pair, &var_str, &oracle));
+
+        // Numeric tower across opposite tuple slots: (float, int) vs (int, float) is NOT disjoint (`(1.0, 2) == (1, 2.0)`)
+        let float_int = CanonicalType::Nominal {
+            fqname: "builtins.tuple".to_string(),
+            args: vec![float_ty.clone(), int_ty.clone()],
+        };
+        let int_float = CanonicalType::Nominal {
+            fqname: "builtins.tuple".to_string(),
+            args: vec![int_ty, float_ty.clone()],
+        };
+        assert!(!are_types_provably_disjoint(
+            &float_int, &int_float, &oracle
+        ));
+
+        // Covariant Sequence / Collection / Iterable ABC subtyping
+        let seq_str = CanonicalType::parse_type_expr("Sequence[str]");
+        let iter_str = CanonicalType::parse_type_expr("Iterable[str]");
+        let coll_float = CanonicalType::parse_type_expr("Collection[float]");
+        let list_str = CanonicalType::parse_type_expr("list[str]");
+        let tuple_bool_int = CanonicalType::Nominal {
+            fqname: "builtins.tuple".to_string(),
+            args: vec![bool_ty, float_ty],
+        };
+        assert_eq!(eval_is_subtype(&fixed_4_str, &seq_str), TriState::Yes);
+        assert_eq!(eval_is_subtype(&fixed_4_str, &iter_str), TriState::Yes);
+        assert_eq!(eval_is_subtype(&var_str, &seq_str), TriState::Yes);
+        assert_eq!(eval_is_subtype(&list_str, &seq_str), TriState::Yes);
+        assert_eq!(eval_is_subtype(&list_str, &iter_str), TriState::Yes);
+        assert_eq!(eval_is_subtype(&str_ty, &seq_str), TriState::Yes);
+        assert_eq!(eval_is_subtype(&tuple_bool_int, &coll_float), TriState::Yes);
+        assert_eq!(eval_is_subtype(&fixed_3_int, &seq_str), TriState::No);
+
+        // Balanced outer parens on multi-group union string
+        let multi_union = CanonicalType::parse_type_expr("(int | str) | (float | bool)");
+        assert_eq!(multi_union.display_short(), "int | str | float | bool");
     }
 }

@@ -5,7 +5,7 @@ use std::sync::{LazyLock, Mutex};
 use riffty_core::{
     AnalysisView, Applicability, CanonicalNode, CanonicalSyntaxTree, CanonicalType,
     CapturedMetavar, Diagnostic, Edit, Fix, ImportSpec, NodeKind, NodeMeta, OverrideRisk,
-    PatternMatch, PrimitiveKind, Purity, RulePlugin, Severity, TextRange, TriState,
+    PatternMatch, Purity, RulePlugin, Severity, TextRange, TriState,
 };
 use serde::{Deserialize, Serialize};
 
@@ -199,7 +199,10 @@ impl RefasterYamlRule {
                 return Err("Refaster rule `id` must not be empty".to_string());
             }
             if spec.pattern.trim().is_empty() {
-                return Err(format!("Refaster rule `{}` has an empty `pattern`", spec.id));
+                return Err(format!(
+                    "Refaster rule `{}` has an empty `pattern`",
+                    spec.id
+                ));
             }
             plugins.push(Box::new(Self::new(spec)));
         }
@@ -392,9 +395,9 @@ fn evaluate_guards(
                 downgrade_to_unsafe,
             } => {
                 let span = resolve_target_range(Some(target), m)?;
-                let risk =
-                    view.oracle
-                        .method_override_risk(view.file_id, span, method, base_type);
+                let risk = view
+                    .oracle
+                    .method_override_risk(view.file_id, span, method, base_type);
                 match risk {
                     OverrideRisk::SealedEquivalent => {
                         proof_map.insert(
@@ -418,10 +421,7 @@ fn evaluate_guards(
                 if is_span_inside_matching_with(view, m.range, callees) {
                     return None;
                 }
-                proof_map.insert(
-                    "not_inside_with".to_string(),
-                    serde_json::json!(callees),
-                );
+                proof_map.insert("not_inside_with".to_string(), serde_json::json!(callees));
             }
         }
     }
@@ -456,9 +456,7 @@ fn is_span_inside_matching_with(
                     return true;
                 }
                 if !want.contains('.') {
-                    if resolved_fqn
-                        .as_deref()
-                        .and_then(|f| f.rsplit('.').next())
+                    if resolved_fqn.as_deref().and_then(|f| f.rsplit('.').next())
                         == Some(want.as_str())
                     {
                         return true;
@@ -478,8 +476,10 @@ fn is_span_inside_matching_with(
 fn is_span_inside_async_def(tree: &CanonicalSyntaxTree, span: TextRange) -> bool {
     let mut best: Option<(u32, NodeKind)> = None;
     for node in tree.iter_nodes() {
-        if matches!(node.kind, NodeKind::FunctionDef | NodeKind::AsyncFunctionDef)
-            && node.range.contains_range(span)
+        if matches!(
+            node.kind,
+            NodeKind::FunctionDef | NodeKind::AsyncFunctionDef
+        ) && node.range.contains_range(span)
         {
             let len = node.range.len();
             if best.is_none_or(|(prev_len, _)| len <= prev_len) {
@@ -554,8 +554,13 @@ fn build_purity_guarded_fix(
     }
 
     let indent = view.tree.line_indent_at(m.range.start);
-    let rendered =
-        interpolate_replacement(template, &m.captures, &view.tree.source, indent, &walrus_vars);
+    let rendered = interpolate_replacement(
+        template,
+        &m.captures,
+        &view.tree.source,
+        indent,
+        &walrus_vars,
+    );
     let title = spec
         .fix_title
         .clone()
@@ -616,7 +621,13 @@ fn interpolate_template(
     captures: &HashMap<String, CapturedMetavar>,
     source: &str,
 ) -> String {
-    interpolate_replacement(template, captures, source, "", &std::collections::HashSet::new())
+    interpolate_replacement(
+        template,
+        captures,
+        source,
+        "",
+        &std::collections::HashSet::new(),
+    )
 }
 
 fn interpolate_replacement(
@@ -696,35 +707,7 @@ fn trim_dangling_comma_before_empty_variadic(out: &mut String) {
 }
 
 fn parse_expected_canonical_type(raw: &str) -> CanonicalType {
-    match raw.trim() {
-        "int" | "builtins.int" => CanonicalType::Primitive(PrimitiveKind::Int),
-        "str" | "builtins.str" => CanonicalType::Primitive(PrimitiveKind::Str),
-        "float" | "builtins.float" => CanonicalType::Primitive(PrimitiveKind::Float),
-        "bool" | "builtins.bool" => CanonicalType::Primitive(PrimitiveKind::Bool),
-        "bytes" | "builtins.bytes" => CanonicalType::Primitive(PrimitiveKind::Bytes),
-        "None" | "NoneType" => CanonicalType::NoneType,
-        other => {
-            if let Some(bracket) = other.find('[')
-                && other.ends_with(']')
-            {
-                let head = other[..bracket].trim();
-                let inner = &other[bracket + 1..other.len() - 1];
-                let args = inner
-                    .split(',')
-                    .map(parse_expected_canonical_type)
-                    .collect();
-                CanonicalType::Nominal {
-                    fqname: head.to_string(),
-                    args,
-                }
-            } else {
-                CanonicalType::Nominal {
-                    fqname: other.to_string(),
-                    args: Vec::new(),
-                }
-            }
-        }
-    }
+    CanonicalType::parse_type_expr(raw)
 }
 
 const fn is_metavar_char(b: u8) -> bool {
@@ -970,7 +953,9 @@ rules:
             "Expected BaseModel subclass inner Config to migrate:\n{final_app}"
         );
         assert!(
-            final_app.contains("class MyController(Controller):\n    class Config:\n        orm_mode = True"),
+            final_app.contains(
+                "class MyController(Controller):\n    class Config:\n        orm_mode = True"
+            ),
             "Expected non-Pydantic Controller inner Config to remain untouched (#50):\n{final_app}"
         );
     }
@@ -1089,5 +1074,97 @@ rules:
             );
         }
     }
-}
 
+    #[test]
+    fn issue_6_refaster_type_assignable_to_handles_variadic_tuples_and_covariant_sequence_abcs() {
+        let yaml = r#"
+rules:
+  - id: RFT-YAML-TUPLE-VAR
+    name: join-variadic-str-tuple
+    severity: info
+    applicability: safe
+    message: "Join variadic or fixed str tuple `$PARTS` directly."
+    pattern: "consume_parts($PARTS)"
+    guards:
+      - kind: type_assignable_to
+        target: "$PARTS"
+        expected_type: "tuple[str, ...]"
+    replace: "':'.join($PARTS)"
+  - id: RFT-YAML-SEQ-STR
+    name: join-str-sequence
+    severity: info
+    applicability: safe
+    message: "Normalize `Sequence[str]` `$SEQ`."
+    pattern: "consume_seq($SEQ)"
+    guards:
+      - kind: type_assignable_to
+        target: "$SEQ"
+        expected_type: "Sequence[str]"
+    replace: "','.join($SEQ)"
+"#;
+        let rules = RefasterYamlRule::from_yaml_str(yaml).expect("valid YAML");
+
+        let py_src = concat!(
+            "def consume_parts(x: object) -> str:\n",
+            "    return ''\n",
+            "\n",
+            "def consume_seq(x: object) -> str:\n",
+            "    return ''\n",
+            "\n",
+            "def run(\n",
+            "    annotated_var: tuple[str, ...],\n",
+            "    fixed_pair: tuple[str, str],\n",
+            "    str_list: list[str],\n",
+            "    int_tuple: tuple[int, ...],\n",
+            "    line: str,\n",
+            ") -> None:\n",
+            "    inferred_var = tuple(line.split(':'))\n",
+            "    a = consume_parts(annotated_var)\n",
+            "    b = consume_parts(inferred_var)\n",
+            "    c = consume_parts(fixed_pair)\n",
+            "    d = consume_parts(int_tuple)\n",
+            "    e = consume_seq(fixed_pair)\n",
+            "    f = consume_seq(str_list)\n",
+            "    g = consume_seq(int_tuple)\n",
+            "    _ = (a, b, c, d, e, f, g)\n",
+        );
+
+        let parser = RuffAstAdapter;
+        let oracle = TyOracleAdapter::new();
+        let import_mgr = RuffImportAdapter;
+        let matcher = AstGrepAdapter;
+        let engine = RifftyEngine {
+            parser: &parser,
+            oracle: &oracle,
+            import_manager: &import_mgr,
+            pattern_matcher: Some(&matcher),
+            rules,
+        };
+
+        let results = engine
+            .run_workspace(
+                &[WorkspaceFile {
+                    file_id: FileId(1),
+                    path: PathBuf::from("sample.py"),
+                    relative_path: "sample.py".to_string(),
+                    source: py_src.to_string(),
+                }],
+                PipelineConfig {
+                    apply_fixes: true,
+                    allow_unsafe_fixes: false,
+                    max_passes: 5,
+                },
+                None,
+            )
+            .expect("pipeline ok");
+
+        let out = &results[0].final_source;
+        assert!(out.contains("a = ':'.join(annotated_var)"), "got:\n{out}");
+        assert!(out.contains("b = ':'.join(inferred_var)"), "got:\n{out}");
+        assert!(out.contains("c = ':'.join(fixed_pair)"), "got:\n{out}");
+        assert!(out.contains("d = consume_parts(int_tuple)"), "got:\n{out}");
+        assert!(out.contains("e = ','.join(fixed_pair)"), "got:\n{out}");
+        assert!(out.contains("f = ','.join(str_list)"), "got:\n{out}");
+        assert!(out.contains("g = consume_seq(int_tuple)"), "got:\n{out}");
+    }
+}

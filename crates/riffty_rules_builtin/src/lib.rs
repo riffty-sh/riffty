@@ -213,7 +213,10 @@ impl RulePlugin for WarningsMissingStacklevelRule {
             return Vec::new();
         };
 
-        let Some(fqn) = view.oracle.resolve_fqname(view.file_id, call_meta.callee_range) else {
+        let Some(fqn) = view
+            .oracle
+            .resolve_fqname(view.file_id, call_meta.callee_range)
+        else {
             return Vec::new();
         };
         if fqn != "warnings.warn" && fqn != "_warnings.warn" {
@@ -307,7 +310,10 @@ impl RulePlugin for WarningsNarrowSkipFilePrefixesRule {
         let Some(NodeMeta::Call(call_meta)) = view.tree.node_meta(node.id) else {
             return Vec::new();
         };
-        let Some(fqn) = view.oracle.resolve_fqname(view.file_id, call_meta.callee_range) else {
+        let Some(fqn) = view
+            .oracle
+            .resolve_fqname(view.file_id, call_meta.callee_range)
+        else {
             return Vec::new();
         };
         if fqn != "warnings.warn" && fqn != "_warnings.warn" {
@@ -394,7 +400,10 @@ impl RulePlugin for AssertWarnsMigrationRule {
             return Vec::new();
         };
 
-        let Some(fqn) = view.oracle.resolve_fqname(view.file_id, call_meta.callee_range) else {
+        let Some(fqn) = view
+            .oracle
+            .resolve_fqname(view.file_id, call_meta.callee_range)
+        else {
             return Vec::new();
         };
         if fqn != "numpy.testing.assert_warns" && fqn != "numpy.testing._private.utils.assert_warns"
@@ -434,7 +443,9 @@ impl RulePlugin for AssertWarnsMigrationRule {
                 .any(|kw| kw.name.as_deref() == Some("match"));
             let fix = Some(Fix {
                 title: if has_match {
-                    format!("Migrate context manager to `pytest.warns({warn_cls_text}, match=...)`.")
+                    format!(
+                        "Migrate context manager to `pytest.warns({warn_cls_text}, match=...)`."
+                    )
                 } else {
                     format!("Migrate context manager to `pytest.warns({warn_cls_text})`.")
                 },
@@ -792,9 +803,7 @@ fn extract_interior_comments(
             let comment_end = i;
             let c_range = TextRange::new(comment_start as u32, comment_end as u32);
             let inside_arg = preserved_spans.iter().any(|sp| sp.contains_range(c_range));
-            if !inside_arg
-                && let Some(text) = c_range.slice(source)
-            {
+            if !inside_arg && let Some(text) = c_range.slice(source) {
                 comments.push(text.trim_end_matches('\r').to_string());
             }
             continue;
@@ -898,7 +907,10 @@ mod tests {
             "    warnings.warn('unpacked', **extra)\n",
         );
         let (patched, remaining) = run_builtin_check(src, true);
-        assert!(remaining.is_empty(), "expected 0 remaining, got {remaining:?}");
+        assert!(
+            remaining.is_empty(),
+            "expected 0 remaining, got {remaining:?}"
+        );
         assert!(
             patched.contains("warnings.warn('legacy api', stacklevel=2)  # keep comment"),
             "patched:\n{patched}"
@@ -951,10 +963,14 @@ mod tests {
             "        _ = 1 + 1\n",
         );
         let (patched, remaining) = run_builtin_check(src, true);
-        assert!(remaining.is_empty(), "expected 0 remaining, got {remaining:?}");
+        assert!(
+            remaining.is_empty(),
+            "expected 0 remaining, got {remaining:?}"
+        );
         assert!(patched.contains("import pytest\n"), "patched:\n{patched}");
         assert!(
-            patched.contains("with pytest.warns(RuntimeWarning, match=msg):  # keep inline comment"),
+            patched
+                .contains("with pytest.warns(RuntimeWarning, match=msg):  # keep inline comment"),
             "patched:\n{patched}"
         );
     }
@@ -1086,14 +1102,98 @@ mod tests {
         );
         let (_out_check, diags) = run_builtin_check(src, false);
         let rft302_diags: Vec<_> = diags.iter().filter(|d| d.rule_id == "RFT-302").collect();
-        assert_eq!(rft302_diags.len(), 4, "Expected 4 RFT-302 diagnostics, got: {rft302_diags:?}");
+        assert_eq!(
+            rft302_diags.len(),
+            4,
+            "Expected 4 RFT-302 diagnostics, got: {rft302_diags:?}"
+        );
         let (out, _remaining) = run_builtin_check(src, true);
         assert!(out.contains("from sqlalchemy import select"), "got:\n{out}");
-        assert!(out.contains("users = session.scalars(select(User)).all()"), "got:\n{out}");
-        assert!(out.contains("cols = session.execute(select(User.id, User.name)).all()"), "got:\n{out}");
-        assert!(out.contains("uid = session.scalar(select(User.id).where(User.active))"), "got:\n{out}");
-        assert!(out.contains("one = session.scalars(select(User).where(User.id == 1)).one_or_none()"), "got:\n{out}");
-        assert!(out.contains("other = client.query(User).all()"), "got:\n{out}");
+        assert!(
+            out.contains("users = session.scalars(select(User)).all()"),
+            "got:\n{out}"
+        );
+        assert!(
+            out.contains("cols = session.execute(select(User.id, User.name)).all()"),
+            "got:\n{out}"
+        );
+        assert!(
+            out.contains("uid = session.scalar(select(User.id).where(User.active))"),
+            "got:\n{out}"
+        );
+        assert!(
+            out.contains("one = session.scalars(select(User).where(User.id == 1)).one_or_none()"),
+            "got:\n{out}"
+        );
+        assert!(
+            out.contains("other = client.query(User).all()"),
+            "got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn issue_6_rft_015_distinguishes_variadic_tuples_from_fixed_1_tuples_and_reproduces_ols() {
+        let src = concat!(
+            "import subprocess\n",
+            "\n",
+            "def test_e2e_cluster_scripts(\n",
+            "    result: subprocess.CompletedProcess[str],\n",
+            "    expected_targets: list[tuple[str, str, str, str, str]],\n",
+            "    lines: list[str],\n",
+            "    explicit_suites: list[tuple[str, ...]],\n",
+            "    list_of_1_tuples: list[tuple[int]],\n",
+            ") -> None:\n",
+            "    # 1. Exact openshift/lightspeed-service reproduction (0 diagnostics expected)\n",
+            "    suites = [tuple(line.split(':')) for line in result.stdout.splitlines()]\n",
+            "    inspection_suites = [\n",
+            "        suite for suite in suites if suite[3].startswith('mcp_inspection')\n",
+            "    ]\n",
+            "    expected_runs = {\n",
+            "        (name, provider, model, suffix)\n",
+            "        for name, provider, _credentials, model, suffix in expected_targets\n",
+            "    }\n",
+            "    assert len(inspection_suites) == len(expected_runs)\n",
+            "    assert set(inspection_suites) == expected_runs\n",
+            "    assert ('openai', 'openai', 'gpt-6-luna', 'default') in suites\n",
+            "\n",
+            "    # 2. Inline comprehension & explicit variadic annotation (0 diagnostics expected)\n",
+            "    assert ('a', 'b', 'c', 'd') in [tuple(line.split(':')) for line in lines]\n",
+            "    assert ('x', 'y') in explicit_suites\n",
+            "\n",
+            "    # 3. True incompatible element type against variadic tuple (1 RFT-015 diagnostic)\n",
+            "    bad_elem = (1, 2, 3) in [tuple(line.split(':')) for line in lines]\n",
+            "\n",
+            "    # 4. True fixed-arity 1-tuple mismatch preserved (1 RFT-015 diagnostic)\n",
+            "    bad_arity = (1, 2) in list_of_1_tuples\n",
+            "    _ = (bad_elem, bad_arity)\n",
+        );
+
+        let (_out, diags) = run_builtin_check(src, false);
+        assert_eq!(
+            diags.len(),
+            2,
+            "Expected 0 FPs on variadic str tuples and 2 real RFT-015 diagnostics, got: {diags:#?}"
+        );
+
+        assert_eq!(diags[0].rule_id, "RFT-015");
+        assert_eq!(
+            diags[0].type_proof,
+            Some(serde_json::json!({
+                "left_type": "tuple[int, int, int]",
+                "container_type": "list[tuple[str, ...]]",
+                "element_type": "tuple[str, ...]",
+            }))
+        );
+
+        assert_eq!(diags[1].rule_id, "RFT-015");
+        assert_eq!(
+            diags[1].type_proof,
+            Some(serde_json::json!({
+                "left_type": "tuple[int, int]",
+                "container_type": "list[tuple[int]]",
+                "element_type": "tuple[int]",
+            }))
+        );
     }
 }
 
@@ -1232,7 +1332,9 @@ impl RulePlugin for SqlAlchemyLegacySessionQueryRule {
 
         let replacement = format!("{session_src}.{session_method}({select_chain}){outer_suffix}");
         let fix = Fix {
-            title: format!("Migrate legacy `session.query(...)` to `{session_method}(select(...))`"),
+            title: format!(
+                "Migrate legacy `session.query(...)` to `{session_method}(select(...))`"
+            ),
             edits: vec![Edit {
                 range: node.range,
                 replacement,
@@ -1250,10 +1352,11 @@ impl RulePlugin for SqlAlchemyLegacySessionQueryRule {
             severity: Severity::Warning,
             file_id: view.file_id,
             range: node.range,
-            message: "Legacy SQLAlchemy `session.query(...)` is deprecated in 2.0; use `select(...)`.".to_string(),
+            message:
+                "Legacy SQLAlchemy `session.query(...)` is deprecated in 2.0; use `select(...)`."
+                    .to_string(),
             type_proof: Some(format!("session: {session_ty:?}").into()),
             fix: Some(fix),
         }]
     }
 }
-
