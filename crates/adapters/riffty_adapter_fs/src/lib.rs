@@ -29,7 +29,10 @@ impl WorkspaceVfsPort for FsWorkspaceAdapter {
         }
 
         if !root.exists() {
-            return Err(format!("workspace path `{}` does not exist", root.display()));
+            return Err(format!(
+                "workspace path `{}` does not exist",
+                root.display()
+            ));
         }
 
         let mut candidate_paths: Vec<PathBuf> = Vec::new();
@@ -73,8 +76,7 @@ impl WorkspaceVfsPort for FsWorkspaceAdapter {
     }
 
     fn read_file(&self, path: &Path) -> Result<String, String> {
-        fs::read_to_string(path)
-            .map_err(|e| format!("failed to read `{}`: {e}", path.display()))
+        fs::read_to_string(path).map_err(|e| format!("failed to read `{}`: {e}", path.display()))
     }
 }
 
@@ -96,9 +98,12 @@ impl PatchApplierPort for FsWorkspaceAdapter {
                 .canonicalize()
                 .map_err(|e| format!("failed to canonicalize workspace root: {e}"))?
         };
-        let canonical_target = target_path
-            .canonicalize()
-            .map_err(|e| format!("failed to canonicalize target `{}`: {e}", target_path.display()))?;
+        let canonical_target = target_path.canonicalize().map_err(|e| {
+            format!(
+                "failed to canonicalize target `{}`: {e}",
+                target_path.display()
+            )
+        })?;
 
         if !canonical_target.starts_with(&canonical_root) {
             return Err(format!(
@@ -120,7 +125,11 @@ impl GitDiffPort for FsWorkspaceAdapter {
         target: &DiffTarget,
     ) -> Result<Vec<FileDiffRanges>, String> {
         let mut cmd = Command::new("git");
-        cmd.arg("-C").arg(repo_root).arg("diff").arg("--unified=0").arg("--no-color");
+        cmd.arg("-C")
+            .arg(repo_root)
+            .arg("diff")
+            .arg("--unified=0")
+            .arg("--no-color");
         match target {
             DiffTarget::Unstaged => {}
             DiffTarget::Staged => {
@@ -158,10 +167,7 @@ impl GitDiffPort for FsWorkspaceAdapter {
                 if line_count == 0 {
                     // Pure deletion hunk: anchor a 1-line neighborhood at `start_line`
                     let idx = start_line.saturating_sub(1) as usize;
-                    let byte_pos = line_starts
-                        .get(idx)
-                        .copied()
-                        .unwrap_or(source.len() as u32);
+                    let byte_pos = line_starts.get(idx).copied().unwrap_or(source.len() as u32);
                     ranges.push(TextRange::new(byte_pos, byte_pos));
                 } else {
                     let start_idx = start_line.saturating_sub(1) as usize;
@@ -206,10 +212,9 @@ pub fn parse_unified_zero_diff(diff_text: &str) -> BTreeMap<String, Vec<(u32, u3
         {
             for part in header.split_whitespace() {
                 if let Some(plus_spec) = part.strip_prefix('+') {
-                    let (start_s, count_s) = plus_spec
-                        .split_once(',')
-                        .unwrap_or((plus_spec, "1"));
-                    if let (Ok(start), Ok(count)) = (start_s.parse::<u32>(), count_s.parse::<u32>()) {
+                    let (start_s, count_s) = plus_spec.split_once(',').unwrap_or((plus_spec, "1"));
+                    if let (Ok(start), Ok(count)) = (start_s.parse::<u32>(), count_s.parse::<u32>())
+                    {
                         map.entry(file.clone()).or_default().push((start, count));
                     }
                 }
@@ -218,4 +223,3 @@ pub fn parse_unified_zero_diff(diff_text: &str) -> BTreeMap<String, Vec<(u32, u3
     }
     map
 }
-

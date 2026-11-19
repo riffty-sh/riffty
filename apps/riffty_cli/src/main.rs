@@ -352,4 +352,3 @@ fn run_check(args: CheckArgs) -> Result<bool, String> {
 fn normalize_rel(p: &str) -> String {
     p.replace('\\', "/").trim_start_matches("./").to_string()
 }
-

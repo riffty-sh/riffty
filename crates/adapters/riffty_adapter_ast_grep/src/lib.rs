@@ -182,4 +182,3 @@ fn strip_trailing_comma_variadic(raw: &str) -> Option<(String, String)> {
 const fn is_metavar_char(b: u8) -> bool {
     b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_'
 }
-

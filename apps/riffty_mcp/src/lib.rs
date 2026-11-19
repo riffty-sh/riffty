@@ -198,7 +198,10 @@ impl ServerHandler for RifftyMcpServer {
 
         let args_val = serde_json::Value::Object(request.arguments.unwrap_or_default());
         let parsed_input: McpReviewToolInput = serde_json::from_value(args_val).map_err(|e| {
-            ErrorData::invalid_params(format!("invalid `riffty_review_changes` parameters: {e}"), None)
+            ErrorData::invalid_params(
+                format!("invalid `riffty_review_changes` parameters: {e}"),
+                None,
+            )
         })?;
 
         let review_req = ReviewChangesRequest {
@@ -265,4 +268,3 @@ pub async fn run_stdio_server_with_venv(
         .map_err(|e| format!("MCP transport error: {e}"))?;
     Ok(())
 }
-

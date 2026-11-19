@@ -130,11 +130,7 @@ exclude = ["build/"]
     #[test]
     fn riffty_toml_takes_precedence_over_pyproject_toml() {
         let dir = make_temp_dir("precedence");
-        std::fs::write(
-            dir.join("riffty.toml"),
-            "rules = \"from_riffty.yaml\"\n",
-        )
-        .unwrap();
+        std::fs::write(dir.join("riffty.toml"), "rules = \"from_riffty.yaml\"\n").unwrap();
         std::fs::write(
             dir.join("pyproject.toml"),
             "[tool.riffty]\nrules = \"from_pyproject.yaml\"\n",
@@ -149,7 +145,10 @@ exclude = ["build/"]
 
     #[test]
     fn exclude_matches_exact_and_directory_prefix() {
-        let excludes = vec!["tests/fixtures/".to_string(), "vendor/legacy.py".to_string()];
+        let excludes = vec![
+            "tests/fixtures/".to_string(),
+            "vendor/legacy.py".to_string(),
+        ];
         assert!(is_excluded("tests/fixtures/bad.py", &excludes));
         assert!(is_excluded("./vendor/legacy.py", &excludes));
         assert!(!is_excluded("tests/fixtures_other/ok.py", &excludes));

@@ -761,17 +761,11 @@ impl ImportManagerPort for RuffImportAdapter {
 
         let mut edits: Vec<Edit> = Vec::new();
         for (module_name, syms) in merge_by_module {
-            if let Some(&(last_start, last_end, stmt_end)) =
-                existing_from_targets.get(&module_name)
+            if let Some(&(last_start, last_end, stmt_end)) = existing_from_targets.get(&module_name)
             {
                 let sym_list: Vec<&str> = syms.iter().map(String::as_str).collect();
                 edits.push(merge_from_import_edit(
-                    source,
-                    nl,
-                    last_start,
-                    last_end,
-                    stmt_end,
-                    &sym_list,
+                    source, nl, last_start, last_end, stmt_end, &sym_list,
                 ));
             }
         }
@@ -792,7 +786,10 @@ impl ImportManagerPort for RuffImportAdapter {
             payload.push_str(&line);
             payload.push_str(nl);
         }
-        if !saw_any_header_import && !source[insert_offset as usize..].is_empty() && !source[insert_offset as usize..].starts_with(['\r', '\n']) {
+        if !saw_any_header_import
+            && !source[insert_offset as usize..].is_empty()
+            && !source[insert_offset as usize..].starts_with(['\r', '\n'])
+        {
             payload.push_str(nl);
         }
 
@@ -871,6 +868,7 @@ impl ImportManagerPort for RuffImportAdapter {
                             req.replaces_fqname.as_deref(),
                             &local_imp.module,
                             &local_imp.symbol,
+                            &req.spec.module,
                         );
                         if (same_bound_name || matches_replaced)
                             && all_name_uses_migrated(
@@ -887,7 +885,10 @@ impl ImportManagerPort for RuffImportAdapter {
                                 local_imp.stmt_range.start.0,
                                 Edit {
                                     range: local_imp.stmt_range,
-                                    replacement: format!("from {} import {new_sym}", req.spec.module),
+                                    replacement: format!(
+                                        "from {} import {new_sym}",
+                                        req.spec.module
+                                    ),
                                 },
                             );
                             satisfied = true;
@@ -909,6 +910,7 @@ impl ImportManagerPort for RuffImportAdapter {
                                 req.replaces_fqname.as_deref(),
                                 &top_imp.module,
                                 &top_imp.symbol,
+                                &req.spec.module,
                             ) {
                                 continue;
                             }
@@ -997,12 +999,21 @@ fn innermost_enclosing_fn(
         .min_by_key(|f| f.fn_range.len())
 }
 
-fn fqn_matches_import(replaces_fqn: Option<&str>, imp_mod: &str, imp_sym: &str) -> bool {
+fn fqn_matches_import(
+    replaces_fqn: Option<&str>,
+    imp_mod: &str,
+    imp_sym: &str,
+    target_mod: &str,
+) -> bool {
     let Some(rep) = replaces_fqn else {
         return false;
     };
     let bound_fqn = format!("{imp_mod}.{imp_sym}");
-    rep == bound_fqn || rep.starts_with(&format!("{bound_fqn}."))
+    if imp_mod == target_mod {
+        rep == bound_fqn
+    } else {
+        rep == bound_fqn || rep.starts_with(&format!("{bound_fqn}."))
+    }
 }
 
 fn has_at_least_one_name_use(
@@ -1372,7 +1383,10 @@ fn first_code_offset_after_leading_comments(source: &str) -> u32 {
     let mut offset = 0usize;
     for line in source.split_inclusive('\n') {
         let trimmed = line.trim();
-        if trimmed.starts_with("#!") || trimmed.starts_with("# -*-") || trimmed.starts_with("# coding") {
+        if trimmed.starts_with("#!")
+            || trimmed.starts_with("# -*-")
+            || trimmed.starts_with("# coding")
+        {
             offset += line.len();
         } else {
             break;
@@ -1388,9 +1402,17 @@ mod tests {
     fn apply_edits(source: &str, edits: &[Edit]) -> String {
         let mut out = source.to_string();
         let mut sorted = edits.to_vec();
-        sorted.sort_by(|a, b| a.range.start.cmp(&b.range.start).then(a.range.end.cmp(&b.range.end)));
+        sorted.sort_by(|a, b| {
+            a.range
+                .start
+                .cmp(&b.range.start)
+                .then(a.range.end.cmp(&b.range.end))
+        });
         for edit in sorted.iter().rev() {
-            out.replace_range(edit.range.start.0 as usize..edit.range.end.0 as usize, &edit.replacement);
+            out.replace_range(
+                edit.range.start.0 as usize..edit.range.end.0 as usize,
+                &edit.replacement,
+            );
         }
         out
     }
@@ -1409,7 +1431,9 @@ mod tests {
             "                    return {}\n",
             "        return {}\n",
         );
-        let tree = RuffAstAdapter.parse(FileId(1), src).expect("parses cleanly");
+        let tree = RuffAstAdapter
+            .parse(FileId(1), src)
+            .expect("parses cleanly");
         let cls_node = tree
             .iter_nodes()
             .find(|n| n.kind == NodeKind::ClassDef)
@@ -1491,14 +1515,20 @@ mod tests {
                 },
             ],
         );
-        assert_eq!(edits.len(), 1, "expected single in-place local import edit, got {edits:?}");
+        assert_eq!(
+            edits.len(),
+            1,
+            "expected single in-place local import edit, got {edits:?}"
+        );
         let patched = apply_edits(src, &edits);
         assert!(
-            patched.contains("        from airflow.sdk.log import mask_secret  # local lazy import\n"),
+            patched
+                .contains("        from airflow.sdk.log import mask_secret  # local lazy import\n"),
             "indentation and trailing comment must be preserved, got:\n{patched}"
         );
         assert!(
-            !patched.starts_with("from airflow.sdk.log") && !patched.contains("_shared.secrets_masker"),
+            !patched.starts_with("from airflow.sdk.log")
+                && !patched.contains("_shared.secrets_masker"),
             "must not insert shadowed module-top import or keep _shared import:\n{patched}"
         );
     }
@@ -1574,5 +1604,28 @@ mod tests {
         );
         assert!(edits.is_empty(), "expected no edits, got {edits:?}");
     }
-}
 
+    #[test]
+    fn r19_merges_same_module_sibling_symbol_without_clobbering_receiver_class_import() {
+        let src = "from datetime import datetime\n\ndef echo():\n    return datetime.utcnow()\n";
+        let tree = RuffAstAdapter.parse(FileId(1), src).expect("parses");
+        let call_start = src.find("datetime.utcnow()").unwrap() as u32;
+        let call_range = TextRange::new(call_start, call_start + "datetime.utcnow()".len() as u32);
+        let edits = RuffImportAdapter.resolve_scoped_import_edits(
+            &tree,
+            &[ScopedImportRequest {
+                spec: ImportSpec {
+                    module: "datetime".to_string(),
+                    symbol: Some("timezone".to_string()),
+                },
+                use_range: call_range,
+                replaces_fqname: Some("datetime.datetime.utcnow".to_string()),
+            }],
+        );
+        let patched = apply_edits(src, &edits);
+        assert_eq!(
+            patched,
+            "from datetime import datetime, timezone\n\ndef echo():\n    return datetime.utcnow()\n"
+        );
+    }
+}

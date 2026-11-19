@@ -123,7 +123,13 @@ pub fn resolve_non_overlapping_fixes(
     import_manager: &dyn ImportManagerPort,
     max_applicability: Applicability,
 ) -> ConflictResolutionOutcome {
-    resolve_non_overlapping_fixes_inner(source, None, diagnostics, import_manager, max_applicability)
+    resolve_non_overlapping_fixes_inner(
+        source,
+        None,
+        diagnostics,
+        import_manager,
+        max_applicability,
+    )
 }
 
 fn resolve_non_overlapping_fixes_inner(
@@ -136,9 +142,10 @@ fn resolve_non_overlapping_fixes_inner(
     let mut candidates: Vec<&Diagnostic> = diagnostics
         .iter()
         .filter(|d| {
-            d.fix
-                .as_ref()
-                .is_some_and(|f| f.applicability <= max_applicability && (!f.edits.is_empty() || !f.required_imports.is_empty()))
+            d.fix.as_ref().is_some_and(|f| {
+                f.applicability <= max_applicability
+                    && (!f.edits.is_empty() || !f.required_imports.is_empty())
+            })
         })
         .collect();
 
@@ -167,10 +174,11 @@ fn resolve_non_overlapping_fixes_inner(
             deferred_diagnostics.push(diag.clone());
             continue;
         }
-        let overlaps_existing = fix
-            .edits
-            .iter()
-            .any(|candidate_edit| accepted_edits.iter().any(|acc| edits_conflict(candidate_edit, acc)));
+        let overlaps_existing = fix.edits.iter().any(|candidate_edit| {
+            accepted_edits
+                .iter()
+                .any(|acc| edits_conflict(candidate_edit, acc))
+        });
 
         if overlaps_existing {
             deferred_diagnostics.push(diag.clone());
@@ -213,7 +221,12 @@ fn resolve_non_overlapping_fixes_inner(
         }
     }
 
-    accepted_edits.sort_by(|a, b| a.range.start.cmp(&b.range.start).then(a.range.end.cmp(&b.range.end)));
+    accepted_edits.sort_by(|a, b| {
+        a.range
+            .start
+            .cmp(&b.range.start)
+            .then(a.range.end.cmp(&b.range.end))
+    });
 
     ConflictResolutionOutcome {
         concrete_edits: accepted_edits,
@@ -399,8 +412,12 @@ impl<'a> RifftyEngine<'a> {
                     continue;
                 }
 
-                let resolution =
-                    resolve_non_overlapping_fixes_scoped(tree, &diags, self.import_manager, max_app);
+                let resolution = resolve_non_overlapping_fixes_scoped(
+                    tree,
+                    &diags,
+                    self.import_manager,
+                    max_app,
+                );
 
                 if resolution.concrete_edits.is_empty() {
                     latest_diagnostics.insert(wf.file_id, diags);
@@ -656,8 +673,11 @@ impl<'a> ReviewFacade<'a> {
                 && res.modified
                 && let Some(&abs_path) = id_to_path.get(&res.file_id)
             {
-                self.patch_applier
-                    .write_patched_file(workspace_root, abs_path, &res.final_source)?;
+                self.patch_applier.write_patched_file(
+                    workspace_root,
+                    abs_path,
+                    &res.final_source,
+                )?;
             }
             auto_healed.extend(res.applied_fixes.iter().cloned());
 
@@ -710,8 +730,8 @@ fn normalize_rel(p: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::sync::{Arc, Mutex};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use riffty_core::{
         CanonicalNode, CanonicalType, FileDiffRanges, Fix, NodeId, NodeMeta, Purity, StoredNode,
@@ -951,7 +971,10 @@ mod tests {
                         title: "Inject timeout=5".to_string(),
                         edits: vec![Edit {
                             range: node.range,
-                            replacement: format!("{}(timeout=5)", &node.raw_text[..node.raw_text.len() - 2]),
+                            replacement: format!(
+                                "{}(timeout=5)",
+                                &node.raw_text[..node.raw_text.len() - 2]
+                            ),
                         }],
                         required_imports: Vec::new(),
                         applicability: Applicability::Safe,
@@ -973,7 +996,10 @@ mod tests {
             oracle: &oracle,
             import_manager: &imports,
             pattern_matcher: None,
-            rules: vec![Box::new(OverlappingRuleWarn), Box::new(OverlappingRuleError)],
+            rules: vec![
+                Box::new(OverlappingRuleWarn),
+                Box::new(OverlappingRuleError),
+            ],
         };
 
         let files = vec![WorkspaceFile {

@@ -45,8 +45,13 @@ fn ruff_ast_and_import_adapter_conformance() {
     assert_eq!(edits.len(), 1);
     let mut patched = src.to_string();
     let e = &edits[0];
-    patched.replace_range(e.range.start.0 as usize..e.range.end.0 as usize, &e.replacement);
-    assert!(patched.starts_with("\"\"\"Module docstring.\"\"\"\nfrom __future__ import annotations\nimport pytest\n"));
+    patched.replace_range(
+        e.range.start.0 as usize..e.range.end.0 as usize,
+        &e.replacement,
+    );
+    assert!(patched.starts_with(
+        "\"\"\"Module docstring.\"\"\"\nfrom __future__ import annotations\nimport pytest\n"
+    ));
 }
 
 #[test]
@@ -244,9 +249,7 @@ fn fs_workspace_and_git_diff_adapter_conformance() {
         .touched_ranges(&temp, &DiffTarget::Unstaged)
         .unwrap();
     assert_eq!(diffs.len(), 1);
-    let touched_slice = diffs[0].touched_ranges[0]
-        .slice("x = 1\ny = 99\n")
-        .unwrap();
+    let touched_slice = diffs[0].touched_ranges[0].slice("x = 1\ny = 99\n").unwrap();
     assert_eq!(touched_slice, "y = 99\n");
 
     // Verify sandbox containment blocks writes outside workspace
@@ -316,7 +319,11 @@ fn golden_scipy_20068_assert_warns_safe_vs_unsafe_and_comment_preservation() {
         .expect("audit succeeds");
 
     let diags = &audit_res[0].remaining_diagnostics;
-    assert_eq!(diags.len(), 2, "expected 2 RFT-301 diagnostics, got {diags:?}");
+    assert_eq!(
+        diags.len(),
+        2,
+        "expected 2 RFT-301 diagnostics, got {diags:?}"
+    );
 
     // First call (`calculate_average(values)`): NO `match` param and `has_var_kwargs == false` => `Applicability::Safe`!
     let safe_diag = &diags[0];
@@ -373,7 +380,10 @@ fn golden_scipy_20068_assert_warns_safe_vs_unsafe_and_comment_preservation() {
         .expect("fix succeeds");
 
     let healed = &fix_res[0].final_source;
-    assert!(healed.contains("import pytest\n"), "missing `import pytest`:\n{healed}");
+    assert!(
+        healed.contains("import pytest\n"),
+        "missing `import pytest`:\n{healed}"
+    );
     assert!(
         healed.contains("# Header comment above calculate_average must survive byte-for-byte"),
         "lost header comment:\n{healed}"
@@ -463,8 +473,14 @@ rules:
         .unwrap();
 
     let out = &res[0].final_source;
-    assert!(out.contains("accepts_timeout('https://a.example', timeout=30)"), "out:\n{out}");
-    assert!(out.contains("runner.run_job(no_timeout, 'https://b.example')"), "out:\n{out}");
+    assert!(
+        out.contains("accepts_timeout('https://a.example', timeout=30)"),
+        "out:\n{out}"
+    );
+    assert!(
+        out.contains("runner.run_job(no_timeout, 'https://b.example')"),
+        "out:\n{out}"
+    );
 }
 
 #[test]
@@ -571,8 +587,8 @@ rules:
 
 #[test]
 fn golden_langchain_38054_pep562_mro_and_polymorphic_compat_override_safety() {
-    let yaml_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("fixtures/open_issue_langchain_38054.yml");
+    let yaml_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/open_issue_langchain_38054.yml");
     let mut rules = builtin_rules();
     rules.extend(RefasterYamlRule::from_yaml_file(&yaml_path).expect("valid langchain 38054 yaml"));
 
@@ -732,4 +748,3 @@ fn golden_langchain_38054_pep562_mro_and_polymorphic_compat_override_safety() {
     );
     assert!(res[9].remaining_diagnostics.is_empty());
 }
-

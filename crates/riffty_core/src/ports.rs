@@ -113,4 +113,3 @@ pub trait GitDiffPort: Send + Sync {
         target: &DiffTarget,
     ) -> Result<Vec<FileDiffRanges>, String>;
 }
-

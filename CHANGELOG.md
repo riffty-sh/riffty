@@ -23,3 +23,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Single-Pass Pipeline (`riffty_pipeline`)**: $O(\text{nodes})$ rule dispatcher, deterministic overlap conflict resolver, bottom-to-top byte patcher, and bounded 10-pass fixpoint loop.
 - **Driven Adapters**: `riffty_adapter_fs`, `riffty_adapter_ruff_ast`, `riffty_adapter_ty` (Astral `ty` Salsa DB), `riffty_adapter_ast_grep`, and `riffty_adapter_refaster`.
 - **Built-in Bug Checkers (`riffty_rules_builtin`)**: `RFT-004`, `RFT-015`, `RFT-118`, `RFT-119`, `RFT-202`, and `RFT-301` with SciPy #20068 golden conformance tests.
+

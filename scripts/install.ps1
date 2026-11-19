@@ -31,3 +31,4 @@ try {
 } finally {
     Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
 }
+

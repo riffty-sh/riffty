@@ -61,13 +61,7 @@ fn cli_check_and_fix_heals_safe_rules_and_preserves_unsafe_on_temp_repo() {
 
     // Run `riffty check --fix --format json <repo>`
     let out = Command::new(bin)
-        .args([
-            "check",
-            "--fix",
-            "--format",
-            "json",
-            repo.to_str().unwrap(),
-        ])
+        .args(["check", "--fix", "--format", "json", repo.to_str().unwrap()])
         .output()
         .expect("run riffty check --fix");
 
@@ -82,7 +76,10 @@ fn cli_check_and_fix_heals_safe_rules_and_preserves_unsafe_on_temp_repo() {
     assert_eq!(report["diagnostics"][0]["applicability"], "Unsafe");
 
     let disk_after = std::fs::read_to_string(&stats_py).unwrap();
-    assert!(disk_after.contains("import pytest\n"), "disk:\n{disk_after}");
+    assert!(
+        disk_after.contains("import pytest\n"),
+        "disk:\n{disk_after}"
+    );
     assert!(
         disk_after.contains("warnings.warn(\"empty slice\", stacklevel=2)"),
         "disk:\n{disk_after}"
@@ -94,7 +91,8 @@ fn cli_check_and_fix_heals_safe_rules_and_preserves_unsafe_on_temp_repo() {
         "disk:\n{disk_after}"
     );
     assert!(
-        disk_after.contains("np.testing.assert_warns(RuntimeWarning, wrapper, [], match=\"empty\")"),
+        disk_after
+            .contains("np.testing.assert_warns(RuntimeWarning, wrapper, [], match=\"empty\")"),
         "Unsafe wrapper call must remain untouched:\n{disk_after}"
     );
 
@@ -260,7 +258,10 @@ fn mcp_stdio_review_changes_diff_scoping_reverse_dependents_and_auto_heal() {
         .expect("text verdict");
     let dry_verdict: serde_json::Value = serde_json::from_str(dry_text).expect("verdict json");
 
-    assert_eq!(dry_verdict["verdict"], "REQUEST_CHANGES", "dry_verdict: {dry_verdict}");
+    assert_eq!(
+        dry_verdict["verdict"], "REQUEST_CHANGES",
+        "dry_verdict: {dry_verdict}"
+    );
     assert_eq!(dry_verdict["summary"]["files_reviewed"], 2);
     assert_eq!(dry_verdict["summary"]["auto_healed_count"], 0);
     assert_eq!(dry_verdict["summary"]["blocking_issues"], 2);
@@ -268,7 +269,9 @@ fn mcp_stdio_review_changes_diff_scoping_reverse_dependents_and_auto_heal() {
     let comments = dry_verdict["blocking_comments"].as_array().unwrap();
     // Verify baseline line 4 (`legacy baseline`) was NOT reported!
     assert!(
-        !comments.iter().any(|c| c["line"] == 4 && c["file"] == "stats.py"),
+        !comments
+            .iter()
+            .any(|c| c["line"] == 4 && c["file"] == "stats.py"),
         "untouched baseline leaked into blocking_comments: {comments:?}"
     );
     // Verify `reverse_dependents` caught `test_caller.py` RFT-301 even though `test_caller.py` had zero git diff!
@@ -282,10 +285,7 @@ fn mcp_stdio_review_changes_diff_scoping_reverse_dependents_and_auto_heal() {
         caller_comment["type_proof"]["target_callable"],
         "calculate_average"
     );
-    assert_eq!(
-        caller_comment["type_proof"]["unexpected_kwarg"],
-        "match"
-    );
+    assert_eq!(caller_comment["type_proof"]["unexpected_kwarg"], "match");
 
     // 4. Now call `riffty_review_changes` with `auto_heal: true`!
     //    Both `RFT-118` in `stats.py` AND `Safe` `RFT-301` in `test_caller.py` are `Applicability::Safe`,
@@ -319,7 +319,10 @@ fn mcp_stdio_review_changes_diff_scoping_reverse_dependents_and_auto_heal() {
         .expect("heal text verdict");
     let heal_verdict: serde_json::Value = serde_json::from_str(heal_text).expect("heal verdict");
 
-    assert_eq!(heal_verdict["verdict"], "APPROVED", "heal_verdict: {heal_verdict}");
+    assert_eq!(
+        heal_verdict["verdict"], "APPROVED",
+        "heal_verdict: {heal_verdict}"
+    );
     assert_eq!(heal_verdict["summary"]["auto_healed_count"], 2);
     assert_eq!(heal_verdict["summary"]["blocking_issues"], 0);
 
@@ -335,9 +338,14 @@ fn mcp_stdio_review_changes_diff_scoping_reverse_dependents_and_auto_heal() {
     );
 
     let caller_after = std::fs::read_to_string(&caller_path).unwrap();
-    assert!(caller_after.contains("import pytest\n"), "caller:\n{caller_after}");
     assert!(
-        caller_after.contains("with pytest.warns(RuntimeWarning, match=\"empty\"):\n        calculate_average([])"),
+        caller_after.contains("import pytest\n"),
+        "caller:\n{caller_after}"
+    );
+    assert!(
+        caller_after.contains(
+            "with pytest.warns(RuntimeWarning, match=\"empty\"):\n        calculate_average([])"
+        ),
         "caller:\n{caller_after}"
     );
 
@@ -345,4 +353,3 @@ fn mcp_stdio_review_changes_diff_scoping_reverse_dependents_and_auto_heal() {
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&repo);
 }
-
