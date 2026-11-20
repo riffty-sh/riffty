@@ -1,5 +1,18 @@
+use riffty_adapter_plugin::ArchitectureForbidRule;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct ArchitectureTomlConfig {
+    pub forbid: Vec<ArchitectureForbidRule>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct JavaTomlConfig {
+    pub architecture: ArchitectureTomlConfig,
+}
 
 /// Optional TOML configuration loaded from `riffty.toml` or `[tool.riffty]` in `pyproject.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -8,6 +21,7 @@ pub struct RifftyTomlConfig {
     pub rules: Option<PathBuf>,
     pub python_venv: Option<PathBuf>,
     pub exclude: Vec<String>,
+    pub java: JavaTomlConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]

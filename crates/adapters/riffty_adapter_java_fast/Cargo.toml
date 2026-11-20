@@ -1,0 +1,13 @@
+[package]
+name = "riffty_adapter_java_fast"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tier 1 in-process zero-JVM Java analyzer powered by tree-sitter-java (ast-grep-language)."
+
+[dependencies]
+ast-grep-core.workspace = true
+ast-grep-language.workspace = true
+riffty_core.workspace = true
+serde_json.workspace = true
+

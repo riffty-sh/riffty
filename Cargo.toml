@@ -9,6 +9,8 @@ members = [
     "crates/adapters/riffty_adapter_ast_grep",
     "crates/adapters/riffty_adapter_ty",
     "crates/adapters/riffty_adapter_refaster",
+    "crates/adapters/riffty_adapter_java_fast",
+    "crates/adapters/riffty_adapter_plugin",
     "apps/riffty_mcp",
     "apps/riffty_cli",
     "tests/conformance",
@@ -30,12 +32,15 @@ riffty_adapter_fs = { version = "0.2.0", path = "crates/adapters/riffty_adapter_
 riffty_adapter_ast_grep = { version = "0.2.0", path = "crates/adapters/riffty_adapter_ast_grep" }
 riffty_adapter_ty = { version = "0.2.0", path = "crates/adapters/riffty_adapter_ty" }
 riffty_adapter_refaster = { version = "0.2.0", path = "crates/adapters/riffty_adapter_refaster" }
+riffty_adapter_java_fast = { version = "0.2.0", path = "crates/adapters/riffty_adapter_java_fast" }
+riffty_adapter_plugin = { version = "0.2.0", path = "crates/adapters/riffty_adapter_plugin" }
 riffty_mcp = { version = "0.2.0", path = "apps/riffty_mcp" }
 clap = { version = "4.6", features = ["derive", "env"] }
 rmcp = { version = "3.10.0", default-features = false, features = ["server", "transport-io"] }
 tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "io-std", "sync"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.11"
 serde_yaml_ng = "0.10.0"
 toml = "1.2"
 ignore = "0.4"
@@ -51,4 +56,4 @@ ty_site_packages = "0.0.22"
 ty_vendored = "0.0.22"
 salsa = { version = "0.28.5", default-features = false, features = ["compact_str", "macros", "salsa_unstable", "inventory", "ordermap"] }
 ast-grep-core = "0.51.2"
-ast-grep-language = { version = "0.51.2", default-features = false, features = ["tree-sitter-python"] }
+ast-grep-language = { version = "0.51.2", default-features = false, features = ["tree-sitter-python", "tree-sitter-java"] }

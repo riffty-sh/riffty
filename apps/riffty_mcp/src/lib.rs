@@ -114,6 +114,46 @@ impl RifftyMcpServer {
     }
 }
 
+/// Canonicalizes `requested` (if provided) and enforces that it remains contained within
+/// `default_root` to prevent MCP clients from scanning or patching arbitrary host directories.
+pub fn resolve_contained_workspace_root(
+    default_root: &Path,
+    requested: Option<&str>,
+) -> Result<PathBuf, String> {
+    let canonical_default = default_root.canonicalize().map_err(|e| {
+        format!(
+            "failed to canonicalize default workspace root `{}`: {e}",
+            default_root.display()
+        )
+    })?;
+
+    let Some(req_str) = requested else {
+        return Ok(canonical_default);
+    };
+
+    let candidate = PathBuf::from(req_str);
+    let resolved = if candidate.is_absolute() {
+        candidate
+    } else {
+        canonical_default.join(candidate)
+    };
+    let canonical_requested = resolved.canonicalize().map_err(|e| {
+        format!(
+            "invalid `workspace_root` `{req_str}`: failed to canonicalize ({e})"
+        )
+    })?;
+
+    if !canonical_requested.starts_with(&canonical_default) {
+        return Err(format!(
+            "security boundary violation: requested `workspace_root` `{}` escapes configured root `{}`",
+            canonical_requested.display(),
+            canonical_default.display()
+        ));
+    }
+
+    Ok(canonical_requested)
+}
+
 /// Executes `ReviewFacade::review_changes` synchronously with the production hexagonal adapters.
 pub fn execute_review_request(
     workspace_root: &Path,
@@ -214,10 +254,11 @@ impl ServerHandler for RifftyMcpServer {
             return Err(ErrorData::invalid_params(msg, None));
         }
 
-        let root = parsed_input
-            .workspace_root
-            .map(PathBuf::from)
-            .unwrap_or_else(|| self.default_workspace_root.clone());
+        let root = resolve_contained_workspace_root(
+            &self.default_workspace_root,
+            parsed_input.workspace_root.as_deref(),
+        )
+        .map_err(|msg| ErrorData::invalid_params(msg, None))?;
         let rules_path = self.rules_path.clone();
         let python_venv = self.python_venv.clone();
 
@@ -267,4 +308,45 @@ pub async fn run_stdio_server_with_venv(
         .await
         .map_err(|e| format!("MCP transport error: {e}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn make_temp_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("riffty_mcp_test_{name}_{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn mcp_workspace_root_containment_allows_subpath_and_blocks_escape() {
+        let root = make_temp_dir("contained_root");
+        let sub = root.join("pkg");
+        let outside = make_temp_dir("outside_root");
+        std::fs::create_dir_all(&sub).unwrap();
+
+        let default_ok = resolve_contained_workspace_root(&root, None).unwrap();
+        assert_eq!(default_ok, root.canonicalize().unwrap());
+
+        let sub_ok =
+            resolve_contained_workspace_root(&root, Some(sub.to_str().unwrap())).unwrap();
+        assert_eq!(sub_ok, sub.canonicalize().unwrap());
+
+        let abs_escape =
+            resolve_contained_workspace_root(&root, Some(outside.to_str().unwrap())).unwrap_err();
+        assert!(abs_escape.contains("security boundary violation"));
+
+        let rel_escape = resolve_contained_workspace_root(&root, Some("..")).unwrap_err();
+        assert!(rel_escape.contains("security boundary violation"));
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
 }

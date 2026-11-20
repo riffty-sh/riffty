@@ -6,9 +6,128 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 pub use ports::{
-    DiffTarget, FileDiffRanges, GitDiffPort, ImportManagerPort, PatchApplierPort,
-    PatternMatcherPort, RulePlugin, SyntaxParserPort, TypeOraclePort, WorkspaceVfsPort,
+    AnalyzePassRequest, AnalyzePassResponse, DiffTarget, FileDiffRanges, GitDiffPort,
+    ImportManagerPort, LanguageAnalyzerPort, PatchApplierPort, PatternMatcherPort, RulePlugin,
+    SyntaxParserPort, TypeOraclePort, WorkspaceVfsPort,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Language {
+    Python,
+    Java,
+}
+
+impl Language {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Language::Python => "python",
+            Language::Java => "java",
+        }
+    }
+
+    pub fn from_extension(ext: &str) -> Option<Self> {
+        match ext.to_ascii_lowercase().as_str() {
+            "py" | "pyi" => Some(Language::Python),
+            "java" => Some(Language::Java),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisTier {
+    /// Full semantic/compiler-verified analysis (Ty for Python, javac+ErrorProne for Java).
+    Tier2Semantic,
+    /// Fast syntactic-only analysis (NullTypeOracle for Python, tree-sitter-java for Java).
+    Tier1Syntactic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnalysisProvenance {
+    pub language: Language,
+    pub tier: AnalysisTier,
+    pub files_analyzed: usize,
+    /// e.g. `Some("jdk 25 (bundled jlink · aot) · 84 jars via target/classes")`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_detail: Option<String>,
+    /// Present whenever analysis ran below `Tier2Semantic`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub degraded_reason: Option<String>,
+    /// Actionable single-line recovery hint for CLI/MCP.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remediation_hint: Option<String>,
+}
+
+/// Lightweight O(log N) byte-offset -> (1-based line, 1-based UTF-8 col) mapper
+/// avoiding redundant full-AST re-parses when formatting diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineIndex {
+    /// Sorted byte offsets of line starts (always starts with 0).
+    line_starts: Vec<u32>,
+}
+
+impl LineIndex {
+    pub fn new(source: &str) -> Self {
+        Self {
+            line_starts: compute_line_starts(source),
+        }
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.line_starts.len()
+    }
+
+    /// 1-indexed line number for a `ByteOffset`.
+    pub fn line_of(&self, offset: ByteOffset) -> u32 {
+        let idx = self.line_starts.partition_point(|&start| start <= offset.0);
+        idx.max(1) as u32
+    }
+
+    /// 1-indexed UTF-8 column number for a `ByteOffset`.
+    pub fn col_of(&self, source: &str, offset: ByteOffset) -> u32 {
+        let line = self.line_of(offset);
+        let line_start = self
+            .line_starts
+            .get((line - 1) as usize)
+            .copied()
+            .unwrap_or(0) as usize;
+        let end = (offset.0 as usize).min(source.len());
+        if line_start <= end
+            && source.is_char_boundary(line_start)
+            && source.is_char_boundary(end)
+        {
+            (source[line_start..end].chars().count() as u32) + 1
+        } else {
+            1
+        }
+    }
+
+    /// Returns `(1-based line, 1-based UTF-8 column)` for `offset`.
+    pub fn line_col(&self, source: &str, offset: ByteOffset) -> (u32, u32) {
+        (self.line_of(offset), self.col_of(source, offset))
+    }
+
+    /// Returns the source slice for a 1-based line number (without trailing `\r`/`\n`).
+    pub fn line_slice<'a>(&self, source: &'a str, line_1based: u32) -> &'a str {
+        let idx = line_1based.saturating_sub(1) as usize;
+        let Some(&start_u32) = self.line_starts.get(idx) else {
+            return "";
+        };
+        let start = (start_u32 as usize).min(source.len());
+        let end = self
+            .line_starts
+            .get(idx + 1)
+            .map(|&e| (e as usize).min(source.len()))
+            .unwrap_or(source.len());
+        if start <= end && source.is_char_boundary(start) && source.is_char_boundary(end) {
+            source[start..end].trim_end_matches(['\r', '\n'])
+        } else {
+            ""
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ByteOffset(pub u32);
@@ -2070,5 +2189,23 @@ mod tests {
         // Balanced outer parens on multi-group union string
         let multi_union = CanonicalType::parse_type_expr("(int | str) | (float | bool)");
         assert_eq!(multi_union.display_short(), "int | str | float | bool");
+    }
+
+    #[test]
+    fn line_index_maps_utf8_offsets_and_slices_accurately() {
+        let src = "alpha = 1\ncafé = 2\n🚀 = 3";
+        let idx = LineIndex::new(src);
+        assert_eq!(idx.line_count(), 3);
+        assert_eq!(idx.line_col(src, ByteOffset(0)), (1, 1));
+        assert_eq!(idx.line_col(src, ByteOffset(10)), (2, 1));
+        // 'é' is 2 bytes in UTF-8, so "café" is 5 bytes (4 chars)
+        let eq_pos = src.find("= 2").unwrap() as u32;
+        assert_eq!(idx.line_col(src, ByteOffset(eq_pos)), (2, 6));
+        let rocket_eq = src.find("= 3").unwrap() as u32;
+        assert_eq!(idx.line_col(src, ByteOffset(rocket_eq)), (3, 3));
+        assert_eq!(idx.line_slice(src, 1), "alpha = 1");
+        assert_eq!(idx.line_slice(src, 2), "café = 2");
+        assert_eq!(idx.line_slice(src, 3), "🚀 = 3");
+        assert_eq!(idx.line_slice(src, 99), "");
     }
 }

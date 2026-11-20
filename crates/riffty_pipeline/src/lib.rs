@@ -1,9 +1,15 @@
+pub mod orchestrator;
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
+pub use orchestrator::{
+    AnalyzerRegistry, PythonLanguageAnalyzer, WorkspaceOrchestrator, WorkspaceRunOutput,
+    render_unified_diff, sanitize_diagnostic_for_source,
+};
 use riffty_core::{
     AnalysisView, Applicability, ByteOffset, CanonicalSyntaxTree, Diagnostic, DiffTarget, Edit,
-    FileId, GitDiffPort, ImportManagerPort, ImportSpec, NodeKind, PatchApplierPort,
+    FileId, GitDiffPort, ImportManagerPort, ImportSpec, LineIndex, NodeKind, PatchApplierPort,
     PatternMatcherPort, RulePlugin, ScopedImportRequest, Severity, SyntaxParserPort, TextRange,
     TypeOraclePort, WorkspaceFile, WorkspaceVfsPort,
 };
@@ -139,6 +145,29 @@ fn resolve_non_overlapping_fixes_inner(
     import_manager: &dyn ImportManagerPort,
     max_applicability: Applicability,
 ) -> ConflictResolutionOutcome {
+    resolve_non_overlapping_fixes_with_imports(
+        source,
+        diagnostics,
+        max_applicability,
+        |scoped_requests, required_imports| {
+            if let Some(syntax_tree) = tree {
+                import_manager.resolve_scoped_import_edits(syntax_tree, scoped_requests)
+            } else {
+                import_manager.resolve_import_edits(source, required_imports)
+            }
+        },
+    )
+}
+
+pub(crate) fn resolve_non_overlapping_fixes_with_imports<F>(
+    source: &str,
+    diagnostics: &[Diagnostic],
+    max_applicability: Applicability,
+    resolve_imports: F,
+) -> ConflictResolutionOutcome
+where
+    F: FnOnce(&[ScopedImportRequest], &[ImportSpec]) -> Vec<Edit>,
+{
     let mut candidates: Vec<&Diagnostic> = diagnostics
         .iter()
         .filter(|d| {
@@ -205,11 +234,7 @@ fn resolve_non_overlapping_fixes_inner(
     }
 
     if !scoped_requests.is_empty() {
-        let import_edits = if let Some(syntax_tree) = tree {
-            import_manager.resolve_scoped_import_edits(syntax_tree, &scoped_requests)
-        } else {
-            import_manager.resolve_import_edits(source, &required_imports)
-        };
+        let import_edits = resolve_imports(&scoped_requests, &required_imports);
         for imp_edit in import_edits {
             if validate_edit_bounds(source, &imp_edit)
                 && !accepted_edits
@@ -300,7 +325,7 @@ pub fn shift_ranges_after_edits(ranges: &[TextRange], sorted_edits: &[Edit]) -> 
         .collect()
 }
 
-fn validate_edit_bounds(source: &str, edit: &Edit) -> bool {
+pub(crate) fn validate_edit_bounds(source: &str, edit: &Edit) -> bool {
     let s = edit.range.start.0 as usize;
     let e = edit.range.end.0 as usize;
     s <= e && e <= source.len() && source.is_char_boundary(s) && source.is_char_boundary(e)
@@ -681,7 +706,7 @@ impl<'a> ReviewFacade<'a> {
             }
             auto_healed.extend(res.applied_fixes.iter().cloned());
 
-            let final_tree = self.engine.parser.parse(res.file_id, &res.final_source)?;
+            let line_index = LineIndex::new(&res.final_source);
             for diag in &res.remaining_diagnostics {
                 if matches!(diag.severity, Severity::Error | Severity::Warning) {
                     let suggested_action = diag
@@ -692,7 +717,7 @@ impl<'a> ReviewFacade<'a> {
                     blocking_comments.push(BlockingComment {
                         id: format!("rev-{comment_seq}"),
                         file: res.relative_path.clone(),
-                        line: final_tree.line_of(ByteOffset(diag.range.start.0)),
+                        line: line_index.line_of(ByteOffset(diag.range.start.0)),
                         rule: diag.rule_id.clone(),
                         severity: diag.severity.as_upper_str().to_string(),
                         message: diag.message.clone(),
@@ -1112,7 +1137,11 @@ mod tests {
     fn review_facade_suppresses_baseline_expands_reverse_dependents_and_auto_heals() {
         struct MemVfs(Vec<WorkspaceFile>);
         impl WorkspaceVfsPort for MemVfs {
-            fn discover_python_files(&self, _root: &Path) -> Result<Vec<WorkspaceFile>, String> {
+            fn discover_files(
+                &self,
+                _root: &Path,
+                _extensions: &[&str],
+            ) -> Result<Vec<WorkspaceFile>, String> {
                 Ok(self.0.clone())
             }
             fn read_file(&self, _path: &Path) -> Result<String, String> {

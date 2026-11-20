@@ -353,3 +353,124 @@ fn mcp_stdio_review_changes_diff_scoping_reverse_dependents_and_auto_heal() {
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&repo);
 }
+
+#[test]
+fn cli_fix_dry_run_emits_unified_diff_without_modifying_disk() {
+    let repo = create_temp_git_repo("cli_dry_run");
+    let app_py = repo.join("app.py");
+    let original = "import warnings\n\ndef f():\n    warnings.warn(\"oops\")\n";
+    std::fs::write(&app_py, original).unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_riffty");
+    let out = Command::new(bin)
+        .args(["check", "--fix", "--dry-run", repo.to_str().unwrap()])
+        .output()
+        .expect("run riffty check --fix --dry-run");
+
+    // Exit code 1 because fixes are pending in dry-run mode
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("--- a/app.py"), "stdout:\n{stdout}");
+    assert!(stdout.contains("+++ b/app.py"), "stdout:\n{stdout}");
+    assert!(
+        stdout.contains("+    warnings.warn(\"oops\", stacklevel=2)"),
+        "stdout:\n{stdout}"
+    );
+    assert!(stdout.contains("dry-run, no files written"), "stdout:\n{stdout}");
+
+    // Disk file MUST remain untouched
+    assert_eq!(std::fs::read_to_string(&app_py).unwrap(), original);
+
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn cli_java_tier1_fix_sarif_explain_doctor_and_require_tier2() {
+    let repo = create_temp_git_repo("cli_java_tier1");
+    let billing_java = repo.join("Billing.java");
+    std::fs::write(
+        &billing_java,
+        concat!(
+            "import java.math.BigDecimal;\n",
+            "import java.util.List;\n",
+            "import java.util.stream.Collectors;\n",
+            "\n",
+            "class Billing {\n",
+            "    void run(List<String> items) {\n",
+            "        BigDecimal fee = new BigDecimal(0.1);\n",
+            "        Integer n = new Integer(7);\n",
+            "        boolean none = items.stream().collect(Collectors.toList()).isEmpty();\n",
+            "    }\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_riffty");
+
+    // 1. SARIF 2.1.0 output (explicitly testing Tier 1 zero-JVM mode)
+    let sarif_out = Command::new(bin)
+        .args([
+            "check",
+            "--java-tier1-only",
+            "--format",
+            "sarif",
+            repo.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run riffty check --format sarif");
+    assert_eq!(sarif_out.status.code(), Some(1));
+    let sarif: serde_json::Value = serde_json::from_slice(&sarif_out.stdout).expect("valid SARIF");
+    assert_eq!(sarif["version"], "2.1.0");
+    assert_eq!(sarif["runs"][0]["results"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        sarif["runs"][0]["properties"]["provenance"][0]["tier"],
+        "tier1_syntactic"
+    );
+
+    // 2. --require-tier2 MUST fail closed with exit code 2 on Java Tier 1
+    let req_t2 = Command::new(bin)
+        .args([
+            "check",
+            "--java-tier1-only",
+            "--require-tier2",
+            repo.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run riffty check --require-tier2");
+    assert_eq!(req_t2.status.code(), Some(2));
+
+    // 3. --fix heals all 3 Safe Tier 1 Java rules cleanly
+    let fix_out = Command::new(bin)
+        .args([
+            "check",
+            "--java-tier1-only",
+            "--fix",
+            "--summary",
+            repo.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run riffty check --fix on Java");
+    assert_eq!(fix_out.status.code(), Some(0));
+    let after = std::fs::read_to_string(&billing_java).unwrap();
+    assert!(after.contains("BigDecimal.valueOf(0.1)"), "after:\n{after}");
+    assert!(after.contains("Integer.valueOf(7)"), "after:\n{after}");
+    assert!(after.contains("items.stream().findAny().isEmpty()"), "after:\n{after}");
+
+    // 4. `riffty explain JAVA-BIGDEC-001` & `riffty doctor`
+    let explain_out = Command::new(bin)
+        .args(["explain", "JAVA-BIGDEC-001"])
+        .output()
+        .expect("run riffty explain");
+    assert_eq!(explain_out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&explain_out.stdout).contains("BigDecimal.valueOf(0.1)"));
+
+    let doctor_out = Command::new(bin)
+        .args(["doctor", repo.to_str().unwrap()])
+        .output()
+        .expect("run riffty doctor");
+    assert_eq!(doctor_out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&doctor_out.stdout).contains("Java Tier 1:"));
+
+    let _ = std::fs::remove_dir_all(&repo);
+}

@@ -1,0 +1,13 @@
+[package]
+name = "riffty_adapter_plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Out-of-process hardened LanguageAnalyzerPort adapter for riffty-java (stdio JSON-RPC v1 & warm Unix daemon)."
+
+[dependencies]
+riffty_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+

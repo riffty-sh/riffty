@@ -1,12 +1,12 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AnalysisView, CanonicalNode, CanonicalSyntaxTree, CanonicalType, Diagnostic, Edit, FileId,
-    ImportSpec, NodeKind, OverrideRisk, PatternMatch, Purity, ScopedImportRequest, TextRange,
-    TriState, WorkspaceFile, eval_has_custom_eq_default,
+    AnalysisProvenance, AnalysisView, CanonicalNode, CanonicalSyntaxTree, CanonicalType,
+    Diagnostic, Edit, FileId, ImportSpec, Language, NodeKind, OverrideRisk, PatternMatch, Purity,
+    ScopedImportRequest, TextRange, TriState, WorkspaceFile, eval_has_custom_eq_default,
 };
 
 pub trait SyntaxParserPort: Send + Sync {
@@ -93,8 +93,84 @@ pub struct FileDiffRanges {
 }
 
 pub trait WorkspaceVfsPort: Send + Sync {
-    fn discover_python_files(&self, root: &Path) -> Result<Vec<WorkspaceFile>, String>;
+    /// Generalized extension-based workspace file discovery.
+    fn discover_files(
+        &self,
+        root: &Path,
+        extensions: &[&str],
+    ) -> Result<Vec<WorkspaceFile>, String>;
+
+    /// Backwards-compatible default delegating to `discover_files`.
+    fn discover_python_files(&self, root: &Path) -> Result<Vec<WorkspaceFile>, String> {
+        self.discover_files(root, &["py"])
+    }
+
     fn read_file(&self, path: &Path) -> Result<String, String>;
+}
+
+#[derive(Debug, Clone)]
+pub struct AnalyzePassRequest<'a> {
+    pub workspace_root: &'a Path,
+    pub files: &'a [WorkspaceFile],
+    /// Optional git-diff byte ranges per file; `None` => full file scope.
+    pub scoped_ranges: Option<&'a HashMap<FileId, Vec<TextRange>>>,
+    pub rules_paths: &'a [PathBuf],
+    pub allow_unsafe: bool,
+    pub pass_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyzePassResponse {
+    pub diagnostics: Vec<Diagnostic>,
+    pub provenance: AnalysisProvenance,
+}
+
+/// Coarse-grained multi-language seam: 1 call per pass/batch, zero per-node IPC.
+pub trait LanguageAnalyzerPort: Send + Sync {
+    fn language(&self) -> Language;
+    fn extensions(&self) -> &'static [&'static str];
+    fn max_fixpoint_passes(&self) -> usize {
+        10
+    }
+
+    /// Runs a single analysis pass over the provided in-memory file buffers.
+    fn analyze_pass(&self, req: &AnalyzePassRequest<'_>) -> Result<AnalyzePassResponse, String>;
+
+    /// Optional import manager (Python uses `RuffImportAdapter`; Java returns `None`
+    /// because Error Prone emits explicit import `Edit`s directly inside `Fix::edits`).
+    fn import_manager(&self) -> Option<&dyn ImportManagerPort> {
+        None
+    }
+
+    /// Optional lexical-scope-aware import resolution for a single file.
+    /// Defaults to delegating to `import_manager().resolve_import_edits(...)`.
+    fn resolve_file_import_edits(
+        &self,
+        file: &WorkspaceFile,
+        requests: &[ScopedImportRequest],
+    ) -> Vec<Edit> {
+        let Some(mgr) = self.import_manager() else {
+            return Vec::new();
+        };
+        let mut seen = HashSet::new();
+        let mut specs = Vec::new();
+        for req in requests {
+            if seen.insert(req.spec.clone()) {
+                specs.push(req.spec.clone());
+            }
+        }
+        mgr.resolve_import_edits(&file.source, &specs)
+    }
+
+    /// Optional reverse-dependent expansion for `--diff` mode.
+    fn reverse_dependents(
+        &self,
+        _root: &Path,
+        _files: &[WorkspaceFile],
+        _touched: &HashMap<FileId, Vec<TextRange>>,
+    ) -> Vec<(FileId, TextRange)> {
+        Vec::new()
+    }
 }
 
 pub trait PatchApplierPort: Send + Sync {

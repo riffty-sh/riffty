@@ -119,6 +119,7 @@ dependencies = [
  "ignore",
  "serde",
  "tree-sitter",
+ "tree-sitter-java",
  "tree-sitter-python",
 ]
 
@@ -1363,6 +1364,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "riffty_adapter_java_fast"
+version = "0.2.0"
+dependencies = [
+ "ast-grep-core",
+ "ast-grep-language",
+ "riffty_core",
+ "serde_json",
+]
+
+[[package]]
+name = "riffty_adapter_plugin"
+version = "0.2.0"
+dependencies = [
+ "riffty_core",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "riffty_adapter_refaster"
 version = "0.2.0"
 dependencies = [
@@ -1411,6 +1432,8 @@ dependencies = [
  "clap",
  "riffty_adapter_ast_grep",
  "riffty_adapter_fs",
+ "riffty_adapter_java_fast",
+ "riffty_adapter_plugin",
  "riffty_adapter_refaster",
  "riffty_adapter_ruff_ast",
  "riffty_adapter_ty",
@@ -2296,6 +2319,16 @@ dependencies = [
  "regex",
  "serde_json",
  "streaming-iterator",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-java"
+version = "0.23.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0aa6cbcdc8c679b214e616fd3300da67da0e492e066df01bcf5a5921a71e90d6"
+dependencies = [
+ "cc",
  "tree-sitter-language",
 ]
 
