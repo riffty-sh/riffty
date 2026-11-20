@@ -4,29 +4,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-if [[ -x "/opt/homebrew/opt/openjdk@25/bin/javac" ]]; then
-  JDK25_BIN="/opt/homebrew/opt/openjdk@25/bin"
-elif [[ -x "$HOME/.sdkman/candidates/java/current/bin/javac" ]]; then
-  JDK25_BIN="$HOME/.sdkman/candidates/java/current/bin"
+mkdir -p dist
+
+if command -v mvn >/dev/null 2>&1 && [[ -f pom.xml ]]; then
+  echo "Building shaded riffty-java-runner.jar with Error Prone + Picnic via Maven..."
+  mvn -q -DskipTests package
 else
-  JDK25_BIN="$(dirname "$(command -v javac)")"
+  echo "ERROR: mvn not found; cannot build shaded Error Prone + Picnic runner" >&2
+  exit 1
 fi
 
-rm -rf build dist
-mkdir -p build dist
-
-"$JDK25_BIN/javac" --release 25 \
-  -d build \
-  src/sh/riffty/java/MiniJson.java \
-  src/sh/riffty/java/Utf16ToUtf8Index.java \
-  src/sh/riffty/java/JavaAnalyzerEngine.java \
-  src/sh/riffty/java/RifftyJavaMain.java
-
-"$JDK25_BIN/jar" --create \
-  --file dist/riffty-java-runner.jar \
-  --main-class sh.riffty.java.RifftyJavaMain \
-  -C build .
-
-shasum -a 256 dist/riffty-java-runner.jar | awk '{print $1}' > dist/riffty-java.sha256
-echo "Built dist/riffty-java-runner.jar (sha256: $(cat dist/riffty-java.sha256))"
-
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum dist/riffty-java-runner.jar | awk '{print $1}' > dist/riffty-java.sha256
+else
+  shasum -a 256 dist/riffty-java-runner.jar | awk '{print $1}' > dist/riffty-java.sha256
+fi
+echo "Built dist/riffty-java-runner.jar ($(du -sh dist/riffty-java-runner.jar | awk '{print $1}'), sha256: $(cat dist/riffty-java.sha256))"

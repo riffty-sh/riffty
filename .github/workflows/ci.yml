@@ -19,6 +19,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
+      - name: Build Java Sidecar Runner (Error Prone + Picnic)
+        run: bash plugins/riffty-java/build.sh
       - name: Run Workspace Test Suite (Zero Warnings Gate)
         env:
           RUSTFLAGS: "-D warnings"
