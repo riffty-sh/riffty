@@ -3,6 +3,7 @@ use std::process::Command;
 
 use riffty_adapter_fs::WorkspaceResolver;
 use riffty_adapter_java_fast::{RuleDoc, java_fast_rule_catalog};
+use riffty_adapter_jsts_fast::jsts_fast_rule_catalog;
 use riffty_adapter_plugin::{discover_java_sidecar_bundle, verify_jar_sha256};
 use riffty_core::{Language, Severity};
 use serde::Serialize;
@@ -73,6 +74,19 @@ fn all_rule_docs() -> Vec<RuleDoc> {
     let mut docs = Vec::new();
     docs.extend_from_slice(python_builtin_rule_catalog());
     docs.extend_from_slice(java_fast_rule_catalog());
+    for d in jsts_fast_rule_catalog() {
+        docs.push(RuleDoc {
+            id: d.id,
+            name: d.name,
+            language: d.language,
+            severity: d.severity,
+            default_applicability: d.default_applicability,
+            summary: d.summary,
+            rationale: d.rationale,
+            bad_example: d.bad_example,
+            good_example: d.good_example,
+        });
+    }
     docs
 }
 
@@ -258,7 +272,10 @@ pub fn build_doctor_report(target_path: &Path) -> DoctorReport {
             package_json_path,
             node_modules_present,
             zero_node_execution: true,
-            tier1: "Active — ast-grep JS/TS Refaster (in-process, zero-Node.js)".to_string(),
+            tier1: format!(
+                "Active — oxc_parser + oxc_semantic (in-process, zero-Node.js, {} rules)",
+                jsts_fast_rule_catalog().len()
+            ),
             tier2: "Pending Milestone 2 (tsrs TS7 Rust type checker)".to_string(),
         },
         mcp_server:

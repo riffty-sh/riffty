@@ -485,7 +485,9 @@ pub fn evaluate_jsts_refaster_rules(
             }
             if line > 1 {
                 let prev_text = line_index.line_slice(source, line - 1);
-                if is_jsts_line_suppressed(prev_text, &d.rule_id) {
+                if prev_text.trim_start().starts_with("//")
+                    && is_jsts_line_suppressed(prev_text, &d.rule_id)
+                {
                     continue;
                 }
             }

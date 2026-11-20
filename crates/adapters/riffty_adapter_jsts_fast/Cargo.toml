@@ -1,0 +1,20 @@
+[package]
+name = "riffty_adapter_jsts_fast"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tier 1 in-process JS/TS analyzer powered by oxc_parser and oxc_semantic (zero Node.js, zero node_modules)."
+
+[dependencies]
+oxc_allocator.workspace = true
+oxc_ast.workspace = true
+oxc_ast_visit.workspace = true
+oxc_parser.workspace = true
+oxc_semantic.workspace = true
+oxc_span.workspace = true
+riffty_adapter_refaster.workspace = true
+riffty_core.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+riffty_pipeline.workspace = true

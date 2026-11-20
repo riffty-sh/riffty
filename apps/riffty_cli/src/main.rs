@@ -11,8 +11,9 @@ use config::{RifftyTomlConfig, is_excluded};
 use riffty_adapter_ast_grep::AstGrepAdapter;
 use riffty_adapter_fs::{FsWorkspaceAdapter, WorkspaceResolver};
 use riffty_adapter_java_fast::JavaFastAnalyzer;
+use riffty_adapter_jsts_fast::JsTsFastAnalyzer;
 use riffty_adapter_plugin::{JavaPluginAdapter, discover_java_sidecar_bundle};
-use riffty_adapter_refaster::{JavaRefasterAnalyzer, JsTsRefasterAnalyzer, RefasterYamlRule};
+use riffty_adapter_refaster::{JavaRefasterAnalyzer, RefasterYamlRule};
 use riffty_adapter_ruff_ast::{RuffAstAdapter, RuffImportAdapter};
 use riffty_adapter_ty::{NullTypeOracle, TyOracleAdapter};
 use riffty_core::{
@@ -349,7 +350,9 @@ fn run_check(args: CheckArgs) -> Result<bool, String> {
         });
     }
 
-    registry.register(JsTsRefasterAnalyzer { rules: jsts_rules });
+    registry.register(JsTsFastAnalyzer {
+        refaster_rules: jsts_rules,
+    });
 
     let extensions = registry.supported_extensions();
     let mut workspace_files = fs_adapter.discover_files(&args.path, &extensions)?;

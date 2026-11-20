@@ -153,8 +153,8 @@ riffty/crates/
 **Goal:** Ship blazing-fast (`<10 ms` per file), zero-config, zero-`node_modules` JS/TS analysis & auto-fixing powered by `oxc_parser` + `oxc_semantic` + `OxcImportAdapter`.
 
 #### Milestone 1 Requirements & Verification Checklist
-- [ ] `REQ-M1-01`: New crate `riffty_adapter_jsts_fast` implements `LanguageAnalyzerPort` for `Language::JsTs` using `oxc_parser` + `oxc_semantic` (supports JS, JSX, TS, TSX, ESM, CJS). *Verify:* unit tests across all 8 extensions.
-- [ ] `REQ-M1-02`: All 6 Tier 1 rules implemented with exact UTF-8 byte-offset `TextRange`s and zero formatting churn:
+- [x] `REQ-M1-01`: New crate `riffty_adapter_jsts_fast` implements `LanguageAnalyzerPort` for `Language::JsTs` using `oxc_parser` + `oxc_semantic` (supports JS, JSX, TS, TSX, ESM, CJS). *Verify:* unit tests across all 8 extensions.
+- [x] `REQ-M1-02`: All 6 Tier 1 rules implemented with exact UTF-8 byte-offset `TextRange`s and zero formatting churn:
   - `JSTS-NAN-EQ-001` (`x === NaN` -> `Number.isNaN(x)`, `Safe`)
   - `JSTS-CLONE-001` (`JSON.parse(JSON.stringify(x))` -> `structuredClone(x)`, `Safe` when unshadowed)
   - `JSTS-REGEX-LOOP-001` (`new RegExp("lit", "flags")` inside loop -> hoisted `const`, `Safe` when no `/g`/`/y` stateful lastIndex hazard!)
@@ -162,12 +162,12 @@ riffty/crates/
   - `JSTS-PROMISE-EXEC-001` (`new Promise(async ...)` detection + `ManualOnly` guidance)
   - `JSTS-DUP-AWAIT-001` (redundant `return await` outside `try`, `Safe`)
   *Verify:* dedicated positive + negative + shadow-safety tests per rule (including verifying `/g` and `/y` stateful regexes are **NOT** hoisted!).
-- [ ] `REQ-M1-03`: `OxcImportAdapter` implements `ImportManagerPort` with lexical scope shadow checking and surgical ESM `import` insertion (zero import reordering churn). *Verify:* unit tests with existing imports, `'use strict'` / `'use client'` directives, and shadowed local bindings.
-- [ ] `REQ-M1-04`: Native `// riffty: ignore[<RULE_ID>]` suppression works on JS/TS files. *Verify:* unit + CLI integration test.
-- [ ] `REQ-M1-05`: `riffty explain <JSTS-RULE>` outputs root cause, FinOps/incident impact, safe-fix conditions, and before/after example for every Tier 1 rule. *Verify:* CLI test for all 6 rule IDs.
-- [ ] `REQ-M1-06`: `AnalysisProvenance` emits `tier1_syntactic` with clear `runtime_detail` (`oxc_semantic`) and `--require-tier2` fails closed with exit code `2`. *Verify:* CLI JSON + SARIF 2.1.0 + exit code `2` test.
-- [ ] `REQ-M1-07`: Fixpoint convergence & idempotency: running `riffty check --fix` twice produces 0 diagnostics and 0 edits on the second run; syntax re-parse via `oxc_parser` has 0 parse errors after every fix. *Verify:* property/idempotency test suite.
-- [ ] `REQ-M1-08`: Full `cargo test --workspace` passes 100%.
+- [x] `REQ-M1-03`: `OxcImportAdapter` implements `ImportManagerPort` with lexical scope shadow checking and surgical ESM `import` insertion (zero import reordering churn). *Verify:* unit tests with existing imports, `'use strict'` / `'use client'` directives, and shadowed local bindings.
+- [x] `REQ-M1-04`: Native `// riffty: ignore[<RULE_ID>]` suppression works on JS/TS files. *Verify:* unit + CLI integration test.
+- [x] `REQ-M1-05`: `riffty explain <JSTS-RULE>` outputs root cause, FinOps/incident impact, safe-fix conditions, and before/after example for every Tier 1 rule. *Verify:* CLI test for all 6 rule IDs.
+- [x] `REQ-M1-06`: `AnalysisProvenance` emits `tier1_syntactic` with clear `runtime_detail` (`oxc_semantic`) and `--require-tier2` fails closed with exit code `2`. *Verify:* CLI JSON + SARIF 2.1.0 + exit code `2` test.
+- [x] `REQ-M1-07`: Fixpoint convergence & idempotency: running `riffty check --fix` twice produces 0 diagnostics and 0 edits on the second run; syntax re-parse via `oxc_parser` has 0 parse errors after every fix. *Verify:* property/idempotency test suite.
+- [x] `REQ-M1-08`: Full `cargo test --workspace` passes 100%.
 
 #### Milestone 1 Proposed Real-Life OSS Validation Scenarios (Parallel Subagents)
 1. **Scenario 1.1 (Auto-Fix Correctness — `JSTS-CLONE-001` / `JSTS-NAN-EQ-001`):** Real OSS TS/JS repo with `JSON.parse(JSON.stringify(...))` or `NaN` comparison (e.g., `langchain-ai/langchainjs` or `n8n-io/n8n`) — prove `--fix` heals deterministically and upstream tests pass.

@@ -474,3 +474,197 @@ fn cli_java_tier1_fix_sarif_explain_doctor_and_require_tier2() {
 
     let _ = std::fs::remove_dir_all(&repo);
 }
+
+#[test]
+fn mcp_stdio_review_changes_heals_java_diff_and_emits_provenance() {
+    let repo = create_temp_git_repo("mcp_java");
+    let billing_java = repo.join("Billing.java");
+    std::fs::write(&billing_java, "class Billing {}\n").unwrap();
+    run_git(&repo, &["add", "."]);
+    run_git(&repo, &["commit", "-m", "baseline"]);
+
+    // Unstaged edit introducing a BigDecimal(double) bug
+    std::fs::write(
+        &billing_java,
+        concat!(
+            "import java.math.BigDecimal;\n",
+            "class Billing {\n",
+            "    BigDecimal fee(double rate) {\n",
+            "        return new BigDecimal(0.1);\n",
+            "    }\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_riffty");
+    let mut child = Command::new(bin)
+        .args(["mcp", "--workspace", repo.to_str().unwrap()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn `riffty mcp`");
+
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "java-agent", "version": "1.0.0" }
+            }
+        })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "riffty_review_changes",
+                "arguments": { "target": "unstaged", "auto_heal": true }
+            }
+        })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+
+    line.clear();
+    stdout.read_line(&mut line).unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
+    let verdict: serde_json::Value =
+        serde_json::from_str(resp["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(verdict["verdict"], "APPROVED", "verdict: {verdict}");
+    assert_eq!(verdict["summary"]["auto_healed_count"], 1);
+    assert_eq!(verdict["provenance"][0]["language"], "java");
+
+    let after = std::fs::read_to_string(&billing_java).unwrap();
+    assert!(after.contains("BigDecimal.valueOf(0.1)"), "after:\n{after}");
+
+    drop(stdin);
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn cli_jsts_tier1_fix_sarif_explain_ignore_and_require_tier2() {
+    let repo = create_temp_git_repo("cli_jsts_tier1");
+    let app_ts = repo.join("app.ts");
+    std::fs::write(
+        &app_ts,
+        concat!(
+            "export async function run(x: number, lines: string[]) {\n",
+            "  const suppressed = x === NaN; // riffty: ignore[JSTS-NAN-EQ-001] -- intentional\n",
+            "  const badNan = x === NaN;\n",
+            "  const cloned = JSON.parse(JSON.stringify(lines));\n",
+            "  let hits = 0;\n",
+            "  for (const s of cloned) {\n",
+            "    if (new RegExp(\"^[0-9]+$\").test(s)) hits++;\n",
+            "  }\n",
+            "  const p = new Promise(async (resolve) => resolve(hits));\n",
+            "  return await p;\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_riffty");
+
+    // 1. REQ-M1-05: `riffty explain` for all 6 Tier 1 JS/TS rule IDs
+    for rule_id in [
+        "JSTS-NAN-EQ-001",
+        "JSTS-CLONE-001",
+        "JSTS-REGEX-LOOP-001",
+        "JSTS-INTL-LOOP-001",
+        "JSTS-PROMISE-EXEC-001",
+        "JSTS-DUP-AWAIT-001",
+    ] {
+        let exp = Command::new(bin)
+            .args(["explain", rule_id])
+            .output()
+            .expect("riffty explain");
+        assert!(exp.status.success(), "explain {rule_id} failed");
+        let stdout = String::from_utf8_lossy(&exp.stdout);
+        assert!(stdout.contains(rule_id), "missing {rule_id} in:\n{stdout}");
+        assert!(stdout.contains("Before:"), "missing Before in:\n{stdout}");
+        assert!(stdout.contains("After:"), "missing After in:\n{stdout}");
+    }
+
+    // 2. REQ-M1-06: `--require-tier2` fails closed with exit code 2
+    let req2 = Command::new(bin)
+        .args(["check", "--require-tier2", repo.to_str().unwrap()])
+        .output()
+        .expect("riffty check --require-tier2");
+    assert_eq!(req2.status.code(), Some(2));
+
+    // 3. REQ-M1-06: JSON provenance emits `tier1_syntactic` with `oxc_semantic`
+    let json_out = Command::new(bin)
+        .args(["check", "--format", "json", repo.to_str().unwrap()])
+        .output()
+        .expect("riffty check --format json");
+    let report: serde_json::Value = serde_json::from_slice(&json_out.stdout).expect("valid json");
+    assert_eq!(report["provenance"][0]["language"], "jsts");
+    assert_eq!(report["provenance"][0]["tier"], "tier1_syntactic");
+    assert!(
+        report["provenance"][0]["runtime_detail"]
+            .as_str()
+            .unwrap()
+            .contains("oxc_semantic")
+    );
+    // REQ-M1-04: Suppressed line 2 must not be reported; 5 unsuppressed findings remain
+    assert_eq!(report["diagnostics_count"], 5, "report: {report}");
+
+    // 4. REQ-M1-06: SARIF 2.1.0 schema check
+    let sarif_out = Command::new(bin)
+        .args(["check", "--format", "sarif", repo.to_str().unwrap()])
+        .output()
+        .expect("riffty check --format sarif");
+    let sarif: serde_json::Value = serde_json::from_slice(&sarif_out.stdout).expect("valid sarif");
+    assert_eq!(sarif["version"], "2.1.0");
+    assert!(sarif["runs"][0]["results"].as_array().unwrap().len() == 5);
+
+    // 5. Fix + idempotency
+    let fix_out = Command::new(bin)
+        .args(["check", "--fix", "--format", "json", repo.to_str().unwrap()])
+        .output()
+        .expect("riffty check --fix");
+    let fix_report: serde_json::Value =
+        serde_json::from_slice(&fix_out.stdout).expect("valid fix json");
+    assert_eq!(fix_report["auto_healed_count"], 4, "fix_report: {fix_report}");
+    assert_eq!(fix_report["diagnostics_count"], 1, "only ManualOnly JSTS-PROMISE-EXEC-001 remains");
+
+    let after = std::fs::read_to_string(&app_ts).unwrap();
+    assert!(after.contains("const suppressed = x === NaN; // riffty: ignore[JSTS-NAN-EQ-001]"));
+    assert!(after.contains("const badNan = Number.isNaN(x);"));
+    assert!(after.contains("const cloned = structuredClone(lines);"));
+    assert!(after.contains("const __RIFFTY_RE_1 = new RegExp(\"^[0-9]+$\");"));
+    assert!(after.contains("return p;"));
+
+    let _ = std::fs::remove_dir_all(&repo);
+}

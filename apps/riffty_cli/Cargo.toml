@@ -13,6 +13,7 @@ clap.workspace = true
 riffty_adapter_ast_grep.workspace = true
 riffty_adapter_fs.workspace = true
 riffty_adapter_java_fast.workspace = true
+riffty_adapter_jsts_fast.workspace = true
 riffty_adapter_plugin.workspace = true
 riffty_adapter_refaster.workspace = true
 riffty_adapter_ruff_ast.workspace = true
