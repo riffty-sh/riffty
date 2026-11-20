@@ -1,6 +1,6 @@
 # RFC: Zero-Config JavaScript / TypeScript Plugin Architecture for `riffty`
 
-- **Status:** Draft — Ready for Execution (Milestones 0–3)
+- **Status:** Implemented & Verified — Milestones 0–3 Complete (27/27 Requirements, 14/14 OSS Scenarios PASS)
 - **Target Repo:** `riffty` (`riffty-sh/riffty`)
 - **Validation Repo:** `riffty-assets` (`benchmarks/jsts_milestones_tests/`)
 - **Precedent:** [`RFC_JAVA_PLUGIN_ARCHITECTURE.md`](./RFC_JAVA_PLUGIN_ARCHITECTURE.md)
@@ -207,11 +207,11 @@ riffty/crates/
 **Goal:** Enterprise-grade architecture governance (native alternative to `eslint-plugin-boundaries` / `dependency-cruiser` / Semgrep), curated JS/TS FinOps Refaster packs, and sub-100 ms incremental monorepo analysis.
 
 #### Milestone 3 Requirements & Verification Checklist
-- [ ] `REQ-M3-01`: Declarative `[[jsts.architecture.forbid]]` in `riffty.toml` enforces glob-based import boundaries (`from = "src/domain/**"`, `target = ["next/**", "@prisma/client", "src/infra/**"]`) across static `import`, `export ... from`, dynamic `import()`, and `require()`, resolving `tsconfig.json` `paths` aliases deterministically. *Verify:* unit + integration tests including path aliases (`@/infra/...`) and barrel re-exports.
-- [ ] `REQ-M3-02`: Architecture violations emit `Error`-level diagnostics with exact source `TextRange` in text, JSON, SARIF 2.1.0, and `riffty mcp` (blocking AI agents from violating boundaries pre-commit). *Verify:* CLI + SARIF + MCP integration tests.
-- [ ] `REQ-M3-03`: Workspace/monorepo incremental caching (content-hash keyed `.d.ts` & module graph cache in `.riffty/cache/jsts-*.bin`) delivers ≥3× warm-run speedup on large TS projects without stale invalidation. *Verify:* benchmark + cache-invalidation test (editing a `.d.ts` invalidates dependents).
-- [ ] `REQ-M3-04`: Reusable JS/TS Refaster rule packs authored under `riffty-assets/rules/ecosystems/` (e.g., `nextjs_*`, `openai_js_*`, `prisma_*`, `aws_sdk_v3_*`) validated via `riffty check --rules ...`. *Verify:* rule-pack test suite passes 100%.
-- [ ] `REQ-M3-05`: Full `cargo test --workspace` passes 100%.
+- [x] `REQ-M3-01`: Declarative `[[jsts.architecture.forbid]]` in `riffty.toml` enforces glob-based import boundaries (`from = "src/domain/**"`, `target = ["next/**", "@prisma/client", "src/infra/**"]`) across static `import`, `export ... from`, dynamic `import()`, and `require()`, resolving `tsconfig.json` `paths` aliases deterministically. *Verify:* unit + integration tests including path aliases (`@/infra/...`) and barrel re-exports.
+- [x] `REQ-M3-02`: Architecture violations emit `Error`-level diagnostics with exact source `TextRange` in text, JSON, SARIF 2.1.0, and `riffty mcp` (blocking AI agents from violating boundaries pre-commit). *Verify:* CLI + SARIF + MCP integration tests.
+- [x] `REQ-M3-03`: Workspace/monorepo incremental caching (content-hash keyed `.d.ts` & module graph cache in `.riffty/cache/jsts-*.bin`) delivers ≥3× warm-run speedup on large TS projects without stale invalidation. *Verify:* benchmark + cache-invalidation test (editing a `.d.ts` invalidates dependents).
+- [x] `REQ-M3-04`: Reusable JS/TS Refaster rule packs authored under `riffty-assets/rules/ecosystems/` (e.g., `nextjs_*`, `openai_js_*`, `prisma_*`, `aws_sdk_v3_*`) validated via `riffty check --rules ...`. *Verify:* rule-pack test suite passes 100%.
+- [x] `REQ-M3-05`: Full `cargo test --workspace` passes 100%.
 
 #### Milestone 3 Proposed Real-Life OSS Validation Scenarios (Parallel Subagents)
 1. **Scenario 3.1 (Declarative `[[jsts.architecture.forbid]]` in SARIF + MCP):** Real TS monorepo (e.g., `calcom/cal.com` or `vercel/ai`) — enforce domain/UI layer boundary with `tsconfig` path aliases, verify exact `TextRange` in SARIF 2.1.0 and MCP `REQUEST_CHANGES`.

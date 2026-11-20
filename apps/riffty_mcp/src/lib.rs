@@ -6,7 +6,7 @@ use riffty_adapter_fs::FsWorkspaceAdapter;
 use riffty_adapter_java_fast::JavaFastAnalyzer;
 use riffty_adapter_plugin::{JavaPluginAdapter, discover_java_sidecar_bundle};
 use riffty_adapter_refaster::RefasterYamlRule;
-use riffty_adapter_tsrs::TsrsSemanticAnalyzer;
+use riffty_adapter_tsrs::{JsTsArchitectureForbidRule, TsrsSemanticAnalyzer};
 use riffty_adapter_ruff_ast::{RuffAstAdapter, RuffImportAdapter};
 use riffty_adapter_ty::TyOracleAdapter;
 use riffty_core::{AnalysisTier, Language, RulePlugin};
@@ -169,7 +169,35 @@ pub fn execute_review_request(
     execute_review_request_with_venv(workspace_root, rules_path, None, request)
 }
 
-/// Executes multi-language (`Python` + `Java`) diff review with Safe-only auto-heal
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct McpRifftyToml {
+    jsts: McpJsTsToml,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct McpJsTsToml {
+    architecture: McpJsTsArchToml,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct McpJsTsArchToml {
+    forbid: Vec<JsTsArchitectureForbidRule>,
+}
+
+fn load_jsts_arch_rules_from_toml(workspace_root: &Path) -> Vec<JsTsArchitectureForbidRule> {
+    let toml_path = workspace_root.join("riffty.toml");
+    let Ok(raw) = std::fs::read_to_string(&toml_path) else {
+        return Vec::new();
+    };
+    toml::from_str::<McpRifftyToml>(&raw)
+        .map(|cfg| cfg.jsts.architecture.forbid)
+        .unwrap_or_default()
+}
+
+/// Executes multi-language (`Python` + `Java` + `JsTs`) diff review with Safe-only auto-heal
 /// and zero build-tool execution.
 pub fn execute_review_request_with_venv(
     workspace_root: &Path,
@@ -219,9 +247,11 @@ pub fn execute_review_request_with_venv(
         registry.register(JavaFastAnalyzer);
     }
 
+    let jsts_arch_forbid = load_jsts_arch_rules_from_toml(workspace_root);
     registry.register(TsrsSemanticAnalyzer {
         refaster_rules: jsts_rules,
         tier1_only: false,
+        architecture_forbid: jsts_arch_forbid,
     });
 
     let facade = MultiLanguageReviewFacade {

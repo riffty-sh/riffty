@@ -353,6 +353,7 @@ fn run_check(args: CheckArgs) -> Result<bool, String> {
     registry.register(TsrsSemanticAnalyzer {
         refaster_rules: jsts_rules,
         tier1_only: args.no_type_oracle,
+        architecture_forbid: toml_cfg.jsts.architecture.forbid.clone(),
     });
 
     let extensions = registry.supported_extensions();

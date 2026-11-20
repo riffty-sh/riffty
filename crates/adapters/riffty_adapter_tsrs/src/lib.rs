@@ -1,6 +1,14 @@
+pub mod architecture;
+pub mod cache;
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+pub use architecture::{
+    JsTsArchitectureForbidRule, TsPathResolver, check_jsts_architecture_rules,
+};
+pub use cache::{CachedFileEntry, JsTsWorkspaceCache, compute_env_fingerprint, sha256_hex};
 
 use riffty_adapter_jsts_fast::{
     JsTsFastAnalyzer, JsTsRuleDoc, OxcImportAdapter, analyze_jsts_source,
@@ -119,6 +127,7 @@ impl Drop for ProgramOwner {
 pub struct TsrsSemanticAnalyzer {
     pub refaster_rules: Vec<RefasterYamlRule>,
     pub tier1_only: bool,
+    pub architecture_forbid: Vec<JsTsArchitectureForbidRule>,
 }
 
 #[derive(Debug)]
@@ -278,6 +287,30 @@ impl LanguageAnalyzerPort for TsrsSemanticAnalyzer {
                         .collect(),
                 };
                 let mut resp = fast.analyze_pass(req)?;
+                if !self.architecture_forbid.is_empty() {
+                    let resolver = find_tsconfig(req.workspace_root, req.files)
+                        .as_deref()
+                        .map(TsPathResolver::from_tsconfig)
+                        .unwrap_or_default();
+                    for wf in req.files {
+                        if req
+                            .scoped_ranges
+                            .is_some_and(|s| !s.contains_key(&wf.file_id))
+                        {
+                            continue;
+                        }
+                        let mut arch_diags = check_jsts_architecture_rules(
+                            wf,
+                            &self.architecture_forbid,
+                            &resolver,
+                        );
+                        if let Some(scopes) = req.scoped_ranges {
+                            let allowed = scopes.get(&wf.file_id).map(Vec::as_slice).unwrap_or(&[]);
+                            arch_diags.retain(|d| allowed.iter().any(|sp| sp.intersects(d.range)));
+                        }
+                        resp.diagnostics.extend(arch_diags);
+                    }
+                }
                 resp.provenance.degraded_reason = Some(reason);
                 resp.provenance.remediation_hint = Some(hint);
                 return Ok(resp);
@@ -304,18 +337,87 @@ impl LanguageAnalyzerPort for TsrsSemanticAnalyzer {
             })
             .collect();
 
-        // 1. Build in-memory tsrs Program (zero Node.js, zero RCE, run_external_code = False)
-        let mut diagnostics = analyze_workspace_with_tsrs(
-            req.workspace_root,
-            &tsconfig_path,
-            req.files,
-            &target_files,
-        )?;
+        // REQ-M3-03: Content-hash keyed incremental workspace cache in `.riffty/cache/jsts-*.bin`
+        let env_fp =
+            compute_env_fingerprint(req.workspace_root, &tsconfig_path, &self.architecture_forbid);
+        let cache_path = JsTsWorkspaceCache::cache_file_path(req.workspace_root, &tsconfig_path);
+        let mut cache = JsTsWorkspaceCache::load(&cache_path, &env_fp)
+            .unwrap_or_else(|| JsTsWorkspaceCache::new(env_fp.clone()));
 
-        // 2. Also run Tier 1 oxc_semantic rules + Refaster YAML rules so Tier 2 is a strict superset!
+        let mut diagnostics: Vec<Diagnostic> = Vec::new();
+        let mut cache_misses: Vec<&WorkspaceFile> = Vec::new();
+        let mut file_hashes: HashMap<FileId, String> = HashMap::with_capacity(target_files.len());
+
         for wf in &target_files {
-            diagnostics.extend(analyze_jsts_source(wf.file_id, &wf.path, &wf.source));
-            if !active_refaster.is_empty() {
+            let hash = sha256_hex(&wf.source);
+            file_hashes.insert(wf.file_id, hash.clone());
+            if let Some(entry) = cache.files.get(&wf.relative_path)
+                && entry.content_sha256 == hash
+            {
+                for cached_diag in &entry.diagnostics {
+                    let mut d = cached_diag.clone();
+                    d.file_id = wf.file_id;
+                    diagnostics.push(d);
+                }
+            } else {
+                cache_misses.push(*wf);
+            }
+        }
+
+        let used_full_cache = !target_files.is_empty() && cache_misses.is_empty();
+
+        if !cache_misses.is_empty() {
+            // 1. Run in-memory tsrs Program on cache misses (zero Node.js, zero RCE)
+            let tsrs_diags = analyze_workspace_with_tsrs(
+                req.workspace_root,
+                &tsconfig_path,
+                req.files,
+                &cache_misses,
+            )?;
+
+            let path_resolver = if !self.architecture_forbid.is_empty() {
+                TsPathResolver::from_tsconfig(&tsconfig_path)
+            } else {
+                TsPathResolver::default()
+            };
+
+            // Group freshly computed Tier 2 + Tier 1 + Arch diagnostics per file for caching
+            let mut per_file_fresh: HashMap<FileId, Vec<Diagnostic>> =
+                HashMap::with_capacity(cache_misses.len());
+            for d in tsrs_diags {
+                per_file_fresh.entry(d.file_id).or_default().push(d);
+            }
+
+            for wf in &cache_misses {
+                let entry_diags = per_file_fresh.entry(wf.file_id).or_default();
+                entry_diags.extend(analyze_jsts_source(wf.file_id, &wf.path, &wf.source));
+                if !self.architecture_forbid.is_empty() {
+                    entry_diags.extend(check_jsts_architecture_rules(
+                        wf,
+                        &self.architecture_forbid,
+                        &path_resolver,
+                    ));
+                }
+                entry_diags.sort_by_key(|d| (d.range.start, d.range.end));
+
+                if let Some(hash) = file_hashes.get(&wf.file_id) {
+                    cache.files.insert(
+                        wf.relative_path.clone(),
+                        CachedFileEntry {
+                            content_sha256: hash.clone(),
+                            diagnostics: entry_diags.clone(),
+                        },
+                    );
+                }
+                diagnostics.extend(entry_diags.iter().cloned());
+            }
+
+            cache.save(&cache_path);
+        }
+
+        // Always evaluate custom Refaster YAML rules fresh (fast ast-grep pass)
+        if !active_refaster.is_empty() {
+            for wf in &target_files {
                 diagnostics.extend(evaluate_jsts_refaster_rules(
                     wf.file_id,
                     &wf.path,
@@ -333,11 +435,25 @@ impl LanguageAnalyzerPort for TsrsSemanticAnalyzer {
             });
         }
 
+        diagnostics.sort_by_key(|d| (d.file_id, d.range.start, d.range.end));
+
         let tsconfig_label = tsconfig_path
             .strip_prefix(req.workspace_root)
             .unwrap_or(&tsconfig_path)
             .display()
             .to_string();
+
+        let runtime_detail = if used_full_cache {
+            format!(
+                "tsrs (TS7 Rust) · {} · {} @types packages · cached",
+                tsconfig_label, types_pkg_count
+            )
+        } else {
+            format!(
+                "tsrs (TS7 Rust) · {} · {} @types packages",
+                tsconfig_label, types_pkg_count
+            )
+        };
 
         Ok(AnalyzePassResponse {
             diagnostics,
@@ -345,10 +461,7 @@ impl LanguageAnalyzerPort for TsrsSemanticAnalyzer {
                 language: Language::JsTs,
                 tier: AnalysisTier::Tier2Semantic,
                 files_analyzed: target_files.len(),
-                runtime_detail: Some(format!(
-                    "tsrs (TS7 Rust) · {} · {} @types packages",
-                    tsconfig_label, types_pkg_count
-                )),
+                runtime_detail: Some(runtime_detail),
                 degraded_reason: None,
                 remediation_hint: None,
             },
@@ -1224,7 +1337,7 @@ fn is_tsrs_constant_literal(node: P<Node>) -> bool {
     }
 }
 
-fn is_jsts_line_suppressed(line_text: &str, rule_id: &str) -> bool {
+pub(crate) fn is_jsts_line_suppressed(line_text: &str, rule_id: &str) -> bool {
     let Some(comment_idx) = line_text.find("//") else {
         return false;
     };
@@ -1532,6 +1645,192 @@ export function syncMisused(): void {
         let out = run_tsrs_on_project(&root, &["src/safe.ts"], true);
         assert_eq!(out.provenance[0].tier, AnalysisTier::Tier2Semantic);
         assert!(out.files[0].final_source.contains("xs.sort((a, b) => a - b);"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn req_m3_01_architecture_forbid_enforces_all_import_forms_and_tsconfig_paths() {
+        let tsconfig = r#"{
+  // JSONC comment supported
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+    },
+    "strict": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*"]
+}"#;
+        let domain_src = r#"import { db } from "@/infra/db";
+import nextRouter from "next/router";
+export { secret } from "../infra/secret";
+export * from "@prisma/client";
+
+export async function load() {
+  const mod = await import("@/infra/lazy");
+  const legacy = require("next/headers");
+  return [db, nextRouter, mod, legacy];
+}
+"#;
+        let allowed_src = r#"import { db } from "@/infra/db";
+export const ok = db;
+"#;
+        let root = make_temp_ts_project(
+            "arch_forbid",
+            &[
+                ("src/domain/order.ts", domain_src),
+                ("src/app/controller.ts", allowed_src),
+                ("src/infra/db.ts", "export const db = {};\n"),
+                ("src/infra/secret.ts", "export const secret = 1;\n"),
+                ("src/infra/lazy.ts", "export const lazy = 2;\n"),
+            ],
+            Some(tsconfig),
+        );
+
+        let arch_rules = vec![JsTsArchitectureForbidRule {
+            id: "JSTS-ARCH-DOMAIN".to_string(),
+            from: "src/domain/**".to_string(),
+            target: vec![
+                "next/**".to_string(),
+                "@prisma/client".to_string(),
+                "src/infra/**".to_string(),
+            ],
+            message: None,
+        }];
+
+        let mut registry = AnalyzerRegistry::new();
+        registry.register(TsrsSemanticAnalyzer {
+            refaster_rules: Vec::new(),
+            tier1_only: false,
+            architecture_forbid: arch_rules,
+        });
+        let orch = WorkspaceOrchestrator {
+            registry: &registry,
+        };
+        let files = vec![
+            WorkspaceFile {
+                file_id: FileId(1),
+                path: root.join("src/domain/order.ts"),
+                relative_path: "src/domain/order.ts".to_string(),
+                source: domain_src.to_string(),
+            },
+            WorkspaceFile {
+                file_id: FileId(2),
+                path: root.join("src/app/controller.ts"),
+                relative_path: "src/app/controller.ts".to_string(),
+                source: allowed_src.to_string(),
+            },
+        ];
+
+        let out = orch
+            .run(
+                &root,
+                &files,
+                &[],
+                PipelineConfig {
+                    apply_fixes: false,
+                    allow_unsafe_fixes: false,
+                    max_passes: 2,
+                },
+                None,
+            )
+            .expect("arch check ok");
+
+        let domain_diags: Vec<&Diagnostic> = out.files[0]
+            .remaining_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "JSTS-ARCH-DOMAIN")
+            .collect();
+        // All 6 forbidden forms caught: static @/infra/db, next/router, export-from ../infra/secret,
+        // export-all @prisma/client, dynamic import("@/infra/lazy"), require("next/headers")!
+        assert_eq!(domain_diags.len(), 6, "got: {domain_diags:?}");
+        assert!(domain_diags.iter().all(|d| d.severity == Severity::Error));
+
+        // src/app/controller.ts is outside `src/domain/**` -> 0 arch violations!
+        let ctrl_arch = out.files[1]
+            .remaining_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "JSTS-ARCH-DOMAIN")
+            .count();
+        assert_eq!(ctrl_arch, 0);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn req_m3_03_incremental_cache_speedup_and_dts_invalidation() {
+        let dts_initial = "declare function getScores(): string[];\n";
+        let app_src = "export function rank() {\n  const s = getScores();\n  return s.sort();\n}\n";
+
+        let root = make_temp_ts_project(
+            "cache_inval",
+            &[("types/scores.d.ts", dts_initial), ("src/rank.ts", app_src)],
+            Some(
+                r#"{"compilerOptions":{"target":"ES2023","module":"ESNext","strict":true,"noEmit":true},"include":["src/**/*","types/**/*"]}"#,
+            ),
+        );
+
+        // 1. Cold run: populates `.riffty/cache/jsts-*.bin`, 0 findings because getScores() returns string[]
+        let t0 = std::time::Instant::now();
+        let cold = run_tsrs_on_project(&root, &["src/rank.ts"], false);
+        let cold_us = t0.elapsed().as_micros();
+        assert_eq!(cold.provenance[0].tier, AnalysisTier::Tier2Semantic);
+        assert!(cold.files[0].remaining_diagnostics.is_empty());
+        assert!(
+            !cold.provenance[0]
+                .runtime_detail
+                .as_deref()
+                .unwrap()
+                .contains("cached")
+        );
+        let cache_dir = root.join(".riffty/cache");
+        assert!(cache_dir.is_dir(), ".riffty/cache must be created");
+
+        // 2. Warm run: hits cache, much faster (>=3x), reports `cached`
+        let t1 = std::time::Instant::now();
+        let warm = run_tsrs_on_project(&root, &["src/rank.ts"], false);
+        let warm_us = t1.elapsed().as_micros().max(1);
+        assert_eq!(warm.provenance[0].tier, AnalysisTier::Tier2Semantic);
+        assert!(
+            warm.provenance[0]
+                .runtime_detail
+                .as_deref()
+                .unwrap()
+                .contains("cached")
+        );
+        assert!(
+            cold_us >= warm_us * 3,
+            "expected >=3x warm speedup: cold={cold_us}us, warm={warm_us}us"
+        );
+
+        // 3. Edit `types/scores.d.ts` from `string[]` -> `number[]`: MUST invalidate cache and catch JSTS-NUM-SORT-001!
+        std::fs::write(
+            root.join("types/scores.d.ts"),
+            "declare function getScores(): number[];\n",
+        )
+        .unwrap();
+        let after_dts_edit = run_tsrs_on_project(&root, &["src/rank.ts"], false);
+        assert_eq!(after_dts_edit.provenance[0].tier, AnalysisTier::Tier2Semantic);
+        assert!(
+            !after_dts_edit.provenance[0]
+                .runtime_detail
+                .as_deref()
+                .unwrap()
+                .contains("cached"),
+            "editing .d.ts MUST invalidate cache"
+        );
+        assert!(
+            after_dts_edit.files[0]
+                .remaining_diagnostics
+                .iter()
+                .any(|d| d.rule_id == "JSTS-NUM-SORT-001"),
+            "after .d.ts edit, tsrs must catch JSTS-NUM-SORT-001: {:?}",
+            after_dts_edit.files[0].remaining_diagnostics
+        );
+
         let _ = std::fs::remove_dir_all(&root);
     }
 }

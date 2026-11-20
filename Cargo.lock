@@ -1780,11 +1780,18 @@ dependencies = [
 name = "riffty_adapter_tsrs"
 version = "0.2.0"
 dependencies = [
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_ast_visit",
+ "oxc_parser",
+ "oxc_span",
  "riffty_adapter_jsts_fast",
  "riffty_adapter_refaster",
  "riffty_core",
  "riffty_pipeline",
+ "serde",
  "serde_json",
+ "sha2",
  "tsrs_ast",
  "tsrs_binder",
  "tsrs_checker",
@@ -1879,6 +1886,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "toml",
 ]
 
 [[package]]

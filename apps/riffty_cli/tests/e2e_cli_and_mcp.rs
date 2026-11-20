@@ -726,3 +726,144 @@ fn req_m2_04_cli_jsts_tier2_tsrs_require_tier2_pass_and_degraded_exit2() {
 
     let _ = std::fs::remove_dir_all(&repo);
 }
+
+#[test]
+fn req_m3_02_cli_sarif_and_mcp_enforce_jsts_architecture_forbid() {
+    let repo = create_temp_git_repo("cli_jsts_arch");
+    std::fs::create_dir_all(repo.join("src/domain")).unwrap();
+    std::fs::create_dir_all(repo.join("src/infra")).unwrap();
+    std::fs::write(
+        repo.join("tsconfig.json"),
+        r#"{"compilerOptions":{"target":"ES2023","module":"ESNext","baseUrl":".","paths":{"@/*":["src/*"]},"strict":true,"noEmit":true},"include":["src/**/*"]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        repo.join("riffty.toml"),
+        r#"
+[[jsts.architecture.forbid]]
+id = "JSTS-ARCH-DOMAIN"
+from = "src/domain/**"
+target = ["src/infra/**", "next/**"]
+"#,
+    )
+    .unwrap();
+    std::fs::write(repo.join("src/infra/db.ts"), "export const db = {};\n").unwrap();
+    std::fs::write(
+        repo.join("src/domain/order.ts"),
+        "export const clean = 1;\n",
+    )
+    .unwrap();
+
+    // Commit clean baseline
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    };
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "clean baseline"]);
+
+    // Introduce forbidden import via tsconfig path alias `@/infra/db`
+    std::fs::write(
+        repo.join("src/domain/order.ts"),
+        "import { db } from \"@/infra/db\";\nexport const leaked = db;\n",
+    )
+    .unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_riffty");
+
+    // 1. CLI SARIF 2.1.0 emits Error-level JSTS-ARCH-DOMAIN at line 1
+    let sarif_out = Command::new(bin)
+        .args(["check", "--format", "sarif", repo.to_str().unwrap()])
+        .output()
+        .expect("riffty check --format sarif");
+    assert_eq!(sarif_out.status.code(), Some(1));
+    let sarif: serde_json::Value = serde_json::from_slice(&sarif_out.stdout).expect("valid sarif");
+    assert_eq!(sarif["version"], "2.1.0");
+    let results = sarif["runs"][0]["results"].as_array().unwrap();
+    assert!(
+        results
+            .iter()
+            .any(|r| r["ruleId"] == "JSTS-ARCH-DOMAIN" && r["level"] == "error"),
+        "sarif results: {results:?}"
+    );
+
+    // 2. Live MCP blocks unstaged boundary leak with REQUEST_CHANGES!
+    let mut child = Command::new(bin)
+        .args(["mcp", "--workspace", repo.to_str().unwrap()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn riffty mcp");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "test", "version": "1.0" }
+            }
+        })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "riffty_review_changes",
+                "arguments": { "target": "unstaged", "auto_heal": true }
+            }
+        })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+
+    line.clear();
+    stdout.read_line(&mut line).unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
+    let verdict: serde_json::Value =
+        serde_json::from_str(resp["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(verdict["verdict"], "REQUEST_CHANGES", "verdict: {verdict}");
+    assert!(
+        verdict["blocking_comments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["rule"] == "JSTS-ARCH-DOMAIN" && c["severity"] == "ERROR"),
+        "verdict: {verdict}"
+    );
+
+    drop(stdin);
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&repo);
+}

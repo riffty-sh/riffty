@@ -6,10 +6,17 @@ license.workspace = true
 description = "Tier 2 in-process TypeScript 7 (tsrs) semantic analyzer for riffty (pure Rust, zero Node.js, zero RCE)."
 
 [dependencies]
+oxc_allocator.workspace = true
+oxc_ast.workspace = true
+oxc_ast_visit.workspace = true
+oxc_parser.workspace = true
+oxc_span.workspace = true
 riffty_adapter_jsts_fast.workspace = true
 riffty_adapter_refaster.workspace = true
 riffty_core.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tsrs_ast.workspace = true
 tsrs_binder.workspace = true
 tsrs_checker.workspace = true
