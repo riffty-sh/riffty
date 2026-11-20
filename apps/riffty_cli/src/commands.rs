@@ -99,8 +99,8 @@ pub fn run_explain(rule_id: Option<&str>, list: bool) -> Result<(), String> {
     if list || rule_id.is_none() {
         println!("Available built-in riffty rules ({}):\n", docs.len());
         println!(
-            "{:<18} {:<8} {:<10} {:<28} {}",
-            "RULE ID", "LANG", "SEVERITY", "DEFAULT --fix", "SUMMARY"
+            "{:<18} {:<8} {:<10} {:<28} SUMMARY",
+            "RULE ID", "LANG", "SEVERITY", "DEFAULT --fix"
         );
         println!("{}", "-".repeat(100));
         for d in &docs {

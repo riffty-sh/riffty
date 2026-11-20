@@ -55,7 +55,7 @@ impl TsPathResolver {
         let base_url = opts
             .get("baseUrl")
             .and_then(|v| v.as_str())
-            .map(|s| normalize_rel_path(s));
+            .map(normalize_rel_path);
         let mut paths = BTreeMap::new();
         if let Some(obj) = opts.get("paths").and_then(|v| v.as_object()) {
             for (k, v) in obj {

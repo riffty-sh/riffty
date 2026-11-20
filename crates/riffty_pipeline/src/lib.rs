@@ -8,10 +8,10 @@ pub use orchestrator::{
     render_unified_diff, sanitize_diagnostic_for_source,
 };
 use riffty_core::{
-    AnalysisView, Applicability, ByteOffset, CanonicalSyntaxTree, Diagnostic, DiffTarget, Edit,
-    FileId, GitDiffPort, ImportManagerPort, ImportSpec, LineIndex, NodeKind, PatchApplierPort,
-    PatternMatcherPort, RulePlugin, ScopedImportRequest, Severity, SyntaxParserPort, TextRange,
-    TypeOraclePort, WorkspaceFile, WorkspaceVfsPort,
+    AnalysisProvenance, AnalysisView, Applicability, ByteOffset, CanonicalSyntaxTree, Diagnostic,
+    DiffTarget, Edit, FileId, GitDiffPort, ImportManagerPort, ImportSpec, LineIndex, NodeKind,
+    PatchApplierPort, PatternMatcherPort, RulePlugin, ScopedImportRequest, Severity,
+    SyntaxParserPort, TextRange, TypeOraclePort, WorkspaceFile, WorkspaceVfsPort,
 };
 use serde::{Deserialize, Serialize};
 
@@ -601,6 +601,8 @@ pub struct BlockingComment {
 pub struct ReviewVerdict {
     pub verdict: String,
     pub summary: ReviewSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provenance: Vec<AnalysisProvenance>,
     pub auto_healed: Vec<AppliedFixRecord>,
     pub blocking_comments: Vec<BlockingComment>,
 }
@@ -636,6 +638,7 @@ impl<'a> ReviewFacade<'a> {
                     auto_healed_count: 0,
                     blocking_issues: 0,
                 },
+                provenance: Vec::new(),
                 auto_healed: Vec::new(),
                 blocking_comments: Vec::new(),
             });
@@ -742,6 +745,161 @@ impl<'a> ReviewFacade<'a> {
                 auto_healed_count: auto_healed.len(),
                 blocking_issues: blocking_comments.len(),
             },
+            provenance: Vec::new(),
+            auto_healed,
+            blocking_comments,
+        })
+    }
+}
+
+/// Multi-language review facade (Python + Java) for `riffty mcp` (`riffty_review_changes`).
+/// Hard-locks `allow_unsafe_fixes = false` and runs through `AnalyzerRegistry` + `WorkspaceOrchestrator`.
+pub struct MultiLanguageReviewFacade<'a> {
+    pub registry: &'a AnalyzerRegistry<'a>,
+    pub vfs: &'a dyn WorkspaceVfsPort,
+    pub patch_applier: &'a dyn PatchApplierPort,
+    pub git_diff: &'a dyn GitDiffPort,
+}
+
+impl<'a> MultiLanguageReviewFacade<'a> {
+    pub fn review_changes(
+        &self,
+        workspace_root: &Path,
+        rules_paths: &[std::path::PathBuf],
+        request: &ReviewChangesRequest,
+    ) -> Result<ReviewVerdict, String> {
+        let diff_target = request.to_diff_target()?;
+        let extensions = self.registry.supported_extensions();
+        let workspace_files = self.vfs.discover_files(workspace_root, &extensions)?;
+        let diff_entries = self.git_diff.touched_ranges(workspace_root, &diff_target)?;
+
+        if diff_entries.is_empty() {
+            return Ok(ReviewVerdict {
+                verdict: "APPROVED".to_string(),
+                summary: ReviewSummary {
+                    files_reviewed: 0,
+                    auto_healed_count: 0,
+                    blocking_issues: 0,
+                },
+                provenance: Vec::new(),
+                auto_healed: Vec::new(),
+                blocking_comments: Vec::new(),
+            });
+        }
+
+        let path_to_id: HashMap<String, FileId> = workspace_files
+            .iter()
+            .map(|wf| (normalize_rel(&wf.relative_path), wf.file_id))
+            .collect();
+
+        let mut scoped_ranges: HashMap<FileId, Vec<TextRange>> = HashMap::new();
+        for entry in &diff_entries {
+            let key = normalize_rel(&entry.relative_path.to_string_lossy());
+            if let Some(&fid) = path_to_id.get(&key) {
+                scoped_ranges
+                    .entry(fid)
+                    .or_default()
+                    .extend(entry.touched_ranges.iter().copied());
+            }
+        }
+
+        if scoped_ranges.is_empty() {
+            return Ok(ReviewVerdict {
+                verdict: "APPROVED".to_string(),
+                summary: ReviewSummary {
+                    files_reviewed: 0,
+                    auto_healed_count: 0,
+                    blocking_issues: 0,
+                },
+                provenance: Vec::new(),
+                auto_healed: Vec::new(),
+                blocking_comments: Vec::new(),
+            });
+        }
+
+        let snapshot = scoped_ranges.clone();
+        for analyzer in self.registry.analyzers() {
+            for (dep_fid, dep_range) in
+                analyzer.reverse_dependents(workspace_root, &workspace_files, &snapshot)
+            {
+                scoped_ranges.entry(dep_fid).or_default().push(dep_range);
+            }
+        }
+
+        let orchestrator = WorkspaceOrchestrator {
+            registry: self.registry,
+        };
+        let run_output = orchestrator.run(
+            workspace_root,
+            &workspace_files,
+            rules_paths,
+            PipelineConfig {
+                apply_fixes: request.auto_heal,
+                allow_unsafe_fixes: false,
+                max_passes: DEFAULT_MAX_FIXPOINT_PASSES,
+            },
+            Some(&scoped_ranges),
+        )?;
+
+        let id_to_path: HashMap<FileId, &Path> = workspace_files
+            .iter()
+            .map(|wf| (wf.file_id, wf.path.as_path()))
+            .collect();
+
+        let mut auto_healed = Vec::new();
+        let mut blocking_comments = Vec::new();
+        let mut comment_seq = 1usize;
+
+        for res in &run_output.files {
+            if request.auto_heal
+                && res.modified
+                && let Some(&abs_path) = id_to_path.get(&res.file_id)
+            {
+                self.patch_applier.write_patched_file(
+                    workspace_root,
+                    abs_path,
+                    &res.final_source,
+                )?;
+            }
+            auto_healed.extend(res.applied_fixes.iter().cloned());
+
+            let line_index = LineIndex::new(&res.final_source);
+            for diag in &res.remaining_diagnostics {
+                if matches!(diag.severity, Severity::Error | Severity::Warning) {
+                    let suggested_action = diag
+                        .fix
+                        .as_ref()
+                        .map(|f| f.title.clone())
+                        .unwrap_or_else(|| "Inspect and remediate diagnostic.".to_string());
+                    blocking_comments.push(BlockingComment {
+                        id: format!("rev-{comment_seq}"),
+                        file: res.relative_path.clone(),
+                        line: line_index.line_of(ByteOffset(diag.range.start.0)),
+                        rule: diag.rule_id.clone(),
+                        severity: diag.severity.as_upper_str().to_string(),
+                        message: diag.message.clone(),
+                        type_proof: diag.type_proof.clone(),
+                        suggested_action,
+                    });
+                    comment_seq += 1;
+                }
+            }
+        }
+
+        let verdict = if blocking_comments.is_empty() {
+            "APPROVED".to_string()
+        } else {
+            "REQUEST_CHANGES".to_string()
+        };
+
+        Ok(ReviewVerdict {
+            verdict,
+            summary: ReviewSummary {
+                files_reviewed: run_output.files.len(),
+                auto_healed_count: auto_healed.len(),
+                blocking_issues: blocking_comments.len(),
+            },
+            provenance: run_output.provenance,
             auto_healed,
             blocking_comments,
         })

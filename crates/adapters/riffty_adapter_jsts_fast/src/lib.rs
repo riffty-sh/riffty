@@ -435,31 +435,32 @@ impl<'a> JsTsTier1Visitor<'a> {
 
     fn check_new_expression(&mut self, new_expr: &NewExpression<'_>) {
         // 1. JSTS-PROMISE-EXEC-001: `new Promise(async (...) => ...)`
-        if is_ident_expr(&new_expr.callee, "Promise") && !self.is_ident_shadowed("Promise") {
-            if let Some(first_arg) = new_expr.arguments.first().and_then(Argument::as_expression) {
-                let is_async_exec = match first_arg.without_parentheses() {
-                    Expression::ArrowFunctionExpression(f) => f.r#async,
-                    Expression::FunctionExpression(f) => f.r#async,
-                    _ => false,
-                };
-                if is_async_exec {
-                    let range = TextRange::new(new_expr.span.start, new_expr.span.end);
-                    self.push_diagnostic(Diagnostic {
-                        rule_id: "JSTS-PROMISE-EXEC-001".to_string(),
-                        rule_name: "async-promise-executor".to_string(),
-                        severity: Severity::Error,
-                        file_id: self.file_id,
-                        range,
-                        message: "Promise executor functions should not be `async`; thrown errors will not reject the outer Promise.".to_string(),
-                        type_proof: None,
-                        fix: Some(Fix {
-                            title: "Refactor `new Promise(async ...)` into an `async` function or non-async executor".to_string(),
-                            applicability: Applicability::ManualOnly,
-                            edits: Vec::new(),
-                            required_imports: Vec::new(),
-                        }),
-                    });
-                }
+        if is_ident_expr(&new_expr.callee, "Promise")
+            && !self.is_ident_shadowed("Promise")
+            && let Some(first_arg) = new_expr.arguments.first().and_then(Argument::as_expression)
+        {
+            let is_async_exec = match first_arg.without_parentheses() {
+                Expression::ArrowFunctionExpression(f) => f.r#async,
+                Expression::FunctionExpression(f) => f.r#async,
+                _ => false,
+            };
+            if is_async_exec {
+                let range = TextRange::new(new_expr.span.start, new_expr.span.end);
+                self.push_diagnostic(Diagnostic {
+                    rule_id: "JSTS-PROMISE-EXEC-001".to_string(),
+                    rule_name: "async-promise-executor".to_string(),
+                    severity: Severity::Error,
+                    file_id: self.file_id,
+                    range,
+                    message: "Promise executor functions should not be `async`; thrown errors will not reject the outer Promise.".to_string(),
+                    type_proof: None,
+                    fix: Some(Fix {
+                        title: "Refactor `new Promise(async ...)` into an `async` function or non-async executor".to_string(),
+                        applicability: Applicability::ManualOnly,
+                        edits: Vec::new(),
+                        required_imports: Vec::new(),
+                    }),
+                });
             }
         }
 
@@ -468,60 +469,61 @@ impl<'a> JsTsTier1Visitor<'a> {
         }
 
         // 2. JSTS-REGEX-LOOP-001: `new RegExp("lit", "flags")` inside loop (skip /g and /y!)
-        if is_ident_expr(&new_expr.callee, "RegExp") && !self.is_ident_shadowed("RegExp") {
-            if matches!(new_expr.arguments.len(), 1 | 2) {
-                let first_str = new_expr
+        if is_ident_expr(&new_expr.callee, "RegExp")
+            && !self.is_ident_shadowed("RegExp")
+            && matches!(new_expr.arguments.len(), 1 | 2)
+        {
+            let first_str = new_expr
+                .arguments
+                .first()
+                .and_then(Argument::as_expression)
+                .and_then(extract_string_literal);
+            let second_str = if new_expr.arguments.len() == 2 {
+                new_expr
                     .arguments
-                    .first()
+                    .get(1)
                     .and_then(Argument::as_expression)
-                    .and_then(extract_string_literal);
-                let second_str = if new_expr.arguments.len() == 2 {
-                    new_expr
-                        .arguments
-                        .get(1)
-                        .and_then(Argument::as_expression)
-                        .and_then(extract_string_literal)
-                } else {
-                    Some("")
-                };
+                    .and_then(extract_string_literal)
+            } else {
+                Some("")
+            };
 
-                if let (Some(_pattern), Some(flags)) = (first_str, second_str) {
-                    // Stateful `/g` and `/y` regexes mutate `lastIndex` and MUST NOT be hoisted!
-                    if !flags.contains('g') && !flags.contains('y') {
-                        let range = TextRange::new(new_expr.span.start, new_expr.span.end);
-                        if let Some(expr_src) =
-                            slice_span(self.source, new_expr.span.start, new_expr.span.end)
-                        {
-                            let var_name = self.next_hoist_name("__RIFFTY_RE");
-                            let (insert_at, indent) = self.hoist_insert_offset_and_indent();
-                            let decl = format!("{indent}const {var_name} = {expr_src};\n");
-                            self.push_diagnostic(Diagnostic {
-                                rule_id: "JSTS-REGEX-LOOP-001".to_string(),
-                                rule_name: "regexp-allocated-in-loop".to_string(),
-                                severity: Severity::Warning,
-                                file_id: self.file_id,
-                                range,
-                                message: format!(
-                                    "Avoid allocating constant `{expr_src}` inside a loop; hoist to `{var_name}`."
-                                ),
-                                type_proof: None,
-                                fix: Some(Fix {
-                                    title: format!("Hoist constant RegExp to `const {var_name}`"),
-                                    applicability: Applicability::Safe,
-                                    edits: vec![
-                                        Edit {
-                                            range: TextRange::new(insert_at, insert_at),
-                                            replacement: decl,
-                                        },
-                                        Edit {
-                                            range,
-                                            replacement: var_name,
-                                        },
-                                    ],
-                                    required_imports: Vec::new(),
-                                }),
-                            });
-                        }
+            if let (Some(_pattern), Some(flags)) = (first_str, second_str) {
+                // Stateful `/g` and `/y` regexes mutate `lastIndex` and MUST NOT be hoisted!
+                if !flags.contains('g') && !flags.contains('y') {
+                    let range = TextRange::new(new_expr.span.start, new_expr.span.end);
+                    if let Some(expr_src) =
+                        slice_span(self.source, new_expr.span.start, new_expr.span.end)
+                    {
+                        let var_name = self.next_hoist_name("__RIFFTY_RE");
+                        let (insert_at, indent) = self.hoist_insert_offset_and_indent();
+                        let decl = format!("{indent}const {var_name} = {expr_src};\n");
+                        self.push_diagnostic(Diagnostic {
+                            rule_id: "JSTS-REGEX-LOOP-001".to_string(),
+                            rule_name: "regexp-allocated-in-loop".to_string(),
+                            severity: Severity::Warning,
+                            file_id: self.file_id,
+                            range,
+                            message: format!(
+                                "Avoid allocating constant `{expr_src}` inside a loop; hoist to `{var_name}`."
+                            ),
+                            type_proof: None,
+                            fix: Some(Fix {
+                                title: format!("Hoist constant RegExp to `const {var_name}`"),
+                                applicability: Applicability::Safe,
+                                edits: vec![
+                                    Edit {
+                                        range: TextRange::new(insert_at, insert_at),
+                                        replacement: decl,
+                                    },
+                                    Edit {
+                                        range,
+                                        replacement: var_name,
+                                    },
+                                ],
+                                required_imports: Vec::new(),
+                            }),
+                        });
                     }
                 }
             }
