@@ -11,6 +11,7 @@ members = [
     "crates/adapters/riffty_adapter_refaster",
     "crates/adapters/riffty_adapter_java_fast",
     "crates/adapters/riffty_adapter_jsts_fast",
+    "crates/adapters/riffty_adapter_tsrs",
     "crates/adapters/riffty_adapter_plugin",
     "apps/riffty_mcp",
     "apps/riffty_cli",
@@ -35,6 +36,7 @@ riffty_adapter_ty = { version = "0.2.0", path = "crates/adapters/riffty_adapter_
 riffty_adapter_refaster = { version = "0.2.0", path = "crates/adapters/riffty_adapter_refaster" }
 riffty_adapter_java_fast = { version = "0.2.0", path = "crates/adapters/riffty_adapter_java_fast" }
 riffty_adapter_jsts_fast = { version = "0.2.0", path = "crates/adapters/riffty_adapter_jsts_fast" }
+riffty_adapter_tsrs = { version = "0.2.0", path = "crates/adapters/riffty_adapter_tsrs" }
 riffty_adapter_plugin = { version = "0.2.0", path = "crates/adapters/riffty_adapter_plugin" }
 riffty_mcp = { version = "0.2.0", path = "apps/riffty_mcp" }
 clap = { version = "4.6", features = ["derive", "env"] }
@@ -65,3 +67,11 @@ oxc_ast_visit = "0.159.0"
 oxc_parser = "0.159.0"
 oxc_semantic = "0.159.0"
 oxc_span = "0.159.0"
+tsrs_ast = "=7.1.0-beta.tsrs3"
+tsrs_binder = "=7.1.0-beta.tsrs3"
+tsrs_checker = "=7.1.0-beta.tsrs3"
+tsrs_compiler = "=7.1.0-beta.tsrs3"
+tsrs_core = "=7.1.0-beta.tsrs3"
+tsrs_scanner = "=7.1.0-beta.tsrs3"
+tsrs_tsoptions = "=7.1.0-beta.tsrs3"
+tsrs_vfs = "=7.1.0-beta.tsrs3"

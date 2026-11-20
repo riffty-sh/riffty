@@ -181,19 +181,19 @@ riffty/crates/
 **Goal:** Deliver 100% compiler-grade TypeScript type proofs in pure Rust (`tsrs`), reading `tsconfig.json` and static `node_modules/**/*.d.ts` with zero Node.js and zero RCE.
 
 #### Milestone 2 Requirements & Verification Checklist
-- [ ] `REQ-M2-01`: New crate `riffty_adapter_tsrs` pins a verified `oxc-project/tsrs` rev and implements `LanguageAnalyzerPort` (with automatic Tier 1 fallback + loud `degraded_reason` when `tsconfig.json` or required `.d.ts` types are missing). *Verify:* integration tests for both healthy Tier 2 and degraded Tier 1 paths.
-- [ ] `REQ-M2-02`: All 5 Tier 2 type-proven rules implemented and verified:
+- [x] `REQ-M2-01`: New crate `riffty_adapter_tsrs` pins a verified `oxc-project/tsrs` rev and implements `LanguageAnalyzerPort` (with automatic Tier 1 fallback + loud `degraded_reason` when `tsconfig.json` or required `.d.ts` types are missing). *Verify:* integration tests for both healthy Tier 2 and degraded Tier 1 paths.
+- [x] `REQ-M2-02`: All 5 Tier 2 type-proven rules implemented and verified:
   - `JSTS-NUM-SORT-001`: Proven `number[]` / `readonly number[]` `.sort()` without comparator -> `Safe` auto-fix `.sort((a, b) => a - b)`; **must NOT fire** on `string[]`, `unknown[]`, or `any[]`.
   - `JSTS-FLOAT-PROMISE-001`: Proven `Promise<T>` / thenable expression statement ignored -> diagnostic with `type_proof` (exact resolved type string); **must NOT fire** on `void`-prefixed, `await`ed, `.catch()`ed, or non-Promise calls.
   - `JSTS-MISUSED-PROMISE-001`: Proven `Promise<T>` in `if (...)` / ternary / `&&` / `||` condition -> `Safe` `await` fix inside `async` functions, `ManualOnly` outside `async`.
   - `JSTS-SDK-CLIENT-001`: Type-verified `new OpenAI()` / `new Anthropic()` / `new S3Client()` / `new PrismaClient()` inside request handler/function -> `Safe` module hoist when stateless & no request-scoped config args, `ManualOnly` otherwise.
   - `JSTS-AWAIT-LOOP-001`: Sequential `await` inside loop on proven `Promise<T>` with independent loop body -> `ManualOnly` diagnostic with `Promise.all` remediation.
   *Verify:* positive, negative, generic, union (`Promise<T> | undefined`), and `any`-fail-closed unit tests for every rule.
-- [ ] `REQ-M2-03`: Fail-closed guarantee on `any` / `unknown` / missing `.d.ts`: verify that unresolved or `any`-typed receivers produce `0` `Applicability::Safe` edits. *Verify:* dedicated fail-closed test suite.
-- [ ] `REQ-M2-04`: `--require-tier2` exits `0` (or `1` on findings) when Tier 2 `tsrs` succeeds, and exits `2` if `node_modules` / `tsconfig.json` causes degradation. *Verify:* CLI integration tests.
-- [ ] `REQ-M2-05`: Zero-RCE audit: verify `riffty_adapter_tsrs` never spawns `node`/`npm`/`pnpm`/`tsc` even when `package.json` contains malicious `postinstall` or `eslint.config.js` contains `process.exit(99)`. *Verify:* automated security regression test.
-- [ ] `REQ-M2-06`: Incremental Pass 2: `max_fixpoint_passes() == 2`; Pass 2 re-verifies only modified files in-memory and confirms 0 new TypeScript semantic errors introduced by `riffty` fixes. *Verify:* integration test.
-- [ ] `REQ-M2-07`: Full `cargo test --workspace` passes 100%.
+- [x] `REQ-M2-03`: Fail-closed guarantee on `any` / `unknown` / missing `.d.ts`: verify that unresolved or `any`-typed receivers produce `0` `Applicability::Safe` edits. *Verify:* dedicated fail-closed test suite.
+- [x] `REQ-M2-04`: `--require-tier2` exits `0` (or `1` on findings) when Tier 2 `tsrs` succeeds, and exits `2` if `node_modules` / `tsconfig.json` causes degradation. *Verify:* CLI integration tests.
+- [x] `REQ-M2-05`: Zero-RCE audit: verify `riffty_adapter_tsrs` never spawns `node`/`npm`/`pnpm`/`tsc` even when `package.json` contains malicious `postinstall` or `eslint.config.js` contains `process.exit(99)`. *Verify:* automated security regression test.
+- [x] `REQ-M2-06`: Incremental Pass 2: `max_fixpoint_passes() == 2`; Pass 2 re-verifies only modified files in-memory and confirms 0 new TypeScript semantic errors introduced by `riffty` fixes. *Verify:* integration test.
+- [x] `REQ-M2-07`: Full `cargo test --workspace` passes 100%.
 
 #### Milestone 2 Proposed Real-Life OSS Validation Scenarios (Parallel Subagents)
 1. **Scenario 2.1 (Type-Proven `number[].sort()` Corruption Auto-Fix — `JSTS-NUM-SORT-001`):** Real OSS TS repo with uncomparator-ed numeric `.sort()` — prove Tier 1 skips untyped `.sort()`, Tier 2 (`--require-tier2`) proves `number[]` and safely heals it with 0 false positives on `string[]`.

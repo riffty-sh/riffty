@@ -4,6 +4,7 @@ use std::process::Command;
 use riffty_adapter_fs::WorkspaceResolver;
 use riffty_adapter_java_fast::{RuleDoc, java_fast_rule_catalog};
 use riffty_adapter_jsts_fast::jsts_fast_rule_catalog;
+use riffty_adapter_tsrs::jsts_tier2_rule_catalog;
 use riffty_adapter_plugin::{discover_java_sidecar_bundle, verify_jar_sha256};
 use riffty_core::{Language, Severity};
 use serde::Serialize;
@@ -74,7 +75,10 @@ fn all_rule_docs() -> Vec<RuleDoc> {
     let mut docs = Vec::new();
     docs.extend_from_slice(python_builtin_rule_catalog());
     docs.extend_from_slice(java_fast_rule_catalog());
-    for d in jsts_fast_rule_catalog() {
+    for d in jsts_fast_rule_catalog()
+        .iter()
+        .chain(jsts_tier2_rule_catalog().iter())
+    {
         docs.push(RuleDoc {
             id: d.id,
             name: d.name,
@@ -276,7 +280,10 @@ pub fn build_doctor_report(target_path: &Path) -> DoctorReport {
                 "Active — oxc_parser + oxc_semantic (in-process, zero-Node.js, {} rules)",
                 jsts_fast_rule_catalog().len()
             ),
-            tier2: "Pending Milestone 2 (tsrs TS7 Rust type checker)".to_string(),
+            tier2: format!(
+                "Active — tsrs (TS7 Rust, in-process, zero-Node.js, {} rules)",
+                jsts_tier2_rule_catalog().len()
+            ),
         },
         mcp_server:
             "Hardened (workspace containment + git ref validation + atomic patch + zero-Node.js)"

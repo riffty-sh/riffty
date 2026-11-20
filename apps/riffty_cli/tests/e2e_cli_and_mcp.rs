@@ -668,3 +668,61 @@ fn cli_jsts_tier1_fix_sarif_explain_ignore_and_require_tier2() {
 
     let _ = std::fs::remove_dir_all(&repo);
 }
+
+#[test]
+fn req_m2_04_cli_jsts_tier2_tsrs_require_tier2_pass_and_degraded_exit2() {
+    let repo = create_temp_git_repo("cli_jsts_tier2");
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    std::fs::write(
+        repo.join("tsconfig.json"),
+        r#"{"compilerOptions":{"target":"ES2022","module":"ESNext","strict":true,"noEmit":true},"include":["src/**/*"]}"#,
+    )
+    .unwrap();
+    let app_ts = repo.join("src/sort.ts");
+    std::fs::write(
+        &app_ts,
+        "export function orderPrices(prices: number[]): number[] {\n  return prices.sort();\n}\n",
+    )
+    .unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_riffty");
+
+    // 1. Healthy Tier 2: --require-tier2 exits 1 on finding (NOT 2!) and emits `tier2_semantic`
+    let check_out = Command::new(bin)
+        .args(["check", "--require-tier2", "--format", "json", repo.to_str().unwrap()])
+        .output()
+        .expect("riffty check --require-tier2");
+    assert_eq!(check_out.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&check_out.stdout).expect("valid json");
+    assert_eq!(report["provenance"][0]["tier"], "tier2_semantic");
+    assert!(
+        report["provenance"][0]["runtime_detail"]
+            .as_str()
+            .unwrap()
+            .contains("tsrs (TS7 Rust)")
+    );
+    assert_eq!(report["diagnostics"][0]["rule_id"], "JSTS-NUM-SORT-001");
+
+    // 2. Healthy Tier 2 --fix --require-tier2 heals and exits 0!
+    let fix_out = Command::new(bin)
+        .args(["check", "--require-tier2", "--fix", repo.to_str().unwrap()])
+        .output()
+        .expect("riffty check --require-tier2 --fix");
+    assert_eq!(fix_out.status.code(), Some(0));
+    let fixed = std::fs::read_to_string(&app_ts).unwrap();
+    assert!(fixed.contains("prices.sort((a, b) => a - b)"), "fixed:\n{fixed}");
+
+    // 3. Degraded when package.json declares dependencies without node_modules -> exit code 2!
+    std::fs::write(
+        repo.join("package.json"),
+        r#"{"name":"app","dependencies":{"openai":"^4.0.0"}}"#,
+    )
+    .unwrap();
+    let deg_out = Command::new(bin)
+        .args(["check", "--require-tier2", repo.to_str().unwrap()])
+        .output()
+        .expect("riffty check --require-tier2 degraded");
+    assert_eq!(deg_out.status.code(), Some(2));
+
+    let _ = std::fs::remove_dir_all(&repo);
+}

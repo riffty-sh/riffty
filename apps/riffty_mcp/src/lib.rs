@@ -4,9 +4,9 @@ use std::sync::Arc;
 use riffty_adapter_ast_grep::AstGrepAdapter;
 use riffty_adapter_fs::FsWorkspaceAdapter;
 use riffty_adapter_java_fast::JavaFastAnalyzer;
-use riffty_adapter_jsts_fast::JsTsFastAnalyzer;
 use riffty_adapter_plugin::{JavaPluginAdapter, discover_java_sidecar_bundle};
 use riffty_adapter_refaster::RefasterYamlRule;
+use riffty_adapter_tsrs::TsrsSemanticAnalyzer;
 use riffty_adapter_ruff_ast::{RuffAstAdapter, RuffImportAdapter};
 use riffty_adapter_ty::TyOracleAdapter;
 use riffty_core::{AnalysisTier, Language, RulePlugin};
@@ -219,8 +219,9 @@ pub fn execute_review_request_with_venv(
         registry.register(JavaFastAnalyzer);
     }
 
-    registry.register(JsTsFastAnalyzer {
+    registry.register(TsrsSemanticAnalyzer {
         refaster_rules: jsts_rules,
+        tier1_only: false,
     });
 
     let facade = MultiLanguageReviewFacade {
