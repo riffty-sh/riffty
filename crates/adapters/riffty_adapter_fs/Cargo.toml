@@ -8,4 +8,5 @@ description = "Driven Adapter implementing WorkspaceVfsPort, PatchApplierPort, a
 [dependencies]
 ignore.workspace = true
 riffty_core.workspace = true
+serde_json.workspace = true
 

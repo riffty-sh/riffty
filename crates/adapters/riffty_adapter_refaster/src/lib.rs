@@ -2,10 +2,13 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{LazyLock, Mutex};
 
+use riffty_adapter_ast_grep::{AstGrepJavaAdapter, AstGrepJsTsAdapter};
 use riffty_core::{
-    AnalysisView, Applicability, CanonicalNode, CanonicalSyntaxTree, CanonicalType,
-    CapturedMetavar, Diagnostic, Edit, Fix, ImportSpec, NodeKind, NodeMeta, OverrideRisk,
-    PatternMatch, Purity, RulePlugin, Severity, TextRange, TriState,
+    AnalysisProvenance, AnalysisTier, AnalysisView, AnalyzePassRequest, AnalyzePassResponse,
+    Applicability, CanonicalNode, CanonicalSyntaxTree, CanonicalType, CapturedMetavar, Diagnostic,
+    Edit, FileId, Fix, ImportSpec, Language, LanguageAnalyzerPort, LineIndex, NodeId, NodeKind,
+    NodeMeta, OverrideRisk, PatternMatch, Purity, RulePlugin, Severity, StoredNode, TextRange,
+    TriState, TypeOraclePort, WorkspaceFile,
 };
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +36,8 @@ enum YamlDocument {
 pub struct RefasterRuleSpec {
     pub id: String,
     pub name: String,
+    #[serde(default = "default_language")]
+    pub language: Language,
     #[serde(default = "default_severity")]
     pub severity: YamlSeverity,
     #[serde(default = "default_applicability")]
@@ -49,6 +54,10 @@ pub struct RefasterRuleSpec {
     pub imports: Vec<ImportSpec>,
     #[serde(default)]
     pub bind_impure_once: bool,
+}
+
+const fn default_language() -> Language {
+    Language::Python
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -186,15 +195,22 @@ impl RefasterYamlRule {
         Self { static_id, spec }
     }
 
-    pub fn from_yaml_str(yaml: &str) -> Result<Vec<Box<dyn RulePlugin>>, String> {
+    pub fn language(&self) -> Language {
+        self.spec.language
+    }
+
+    pub fn spec(&self) -> &RefasterRuleSpec {
+        &self.spec
+    }
+
+    pub fn load_specs_from_str(yaml: &str) -> Result<Vec<RefasterRuleSpec>, String> {
         let parsed: YamlDocument =
             serde_yaml_ng::from_str(yaml).map_err(|e| format!("invalid Refaster YAML: {e}"))?;
         let specs = match parsed {
             YamlDocument::Envelope { rules } => rules,
             YamlDocument::List(rules) => rules,
         };
-        let mut plugins: Vec<Box<dyn RulePlugin>> = Vec::with_capacity(specs.len());
-        for spec in specs {
+        for spec in &specs {
             if spec.id.trim().is_empty() {
                 return Err("Refaster rule `id` must not be empty".to_string());
             }
@@ -204,15 +220,372 @@ impl RefasterYamlRule {
                     spec.id
                 ));
             }
-            plugins.push(Box::new(Self::new(spec)));
         }
-        Ok(plugins)
+        Ok(specs)
+    }
+
+    pub fn load_specs_from_file(path: &Path) -> Result<Vec<RefasterRuleSpec>, String> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read Refaster YAML `{}`: {e}", path.display()))?;
+        Self::load_specs_from_str(&content)
+    }
+
+    pub fn from_yaml_str(yaml: &str) -> Result<Vec<Box<dyn RulePlugin>>, String> {
+        let specs = Self::load_specs_from_str(yaml)?;
+        Ok(specs
+            .into_iter()
+            .map(|spec| Box::new(Self::new(spec)) as Box<dyn RulePlugin>)
+            .collect())
+    }
+
+    pub fn from_yaml_str_for_language(
+        yaml: &str,
+        language: Language,
+    ) -> Result<Vec<Box<dyn RulePlugin>>, String> {
+        let specs = Self::load_specs_from_str(yaml)?;
+        Ok(specs
+            .into_iter()
+            .filter(|spec| spec.language == language)
+            .map(|spec| Box::new(Self::new(spec)) as Box<dyn RulePlugin>)
+            .collect())
     }
 
     pub fn from_yaml_file(path: &Path) -> Result<Vec<Box<dyn RulePlugin>>, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("failed to read Refaster YAML `{}`: {e}", path.display()))?;
         Self::from_yaml_str(&content)
+    }
+
+    pub fn from_yaml_file_for_language(
+        path: &Path,
+        language: Language,
+    ) -> Result<Vec<Box<dyn RulePlugin>>, String> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read Refaster YAML `{}`: {e}", path.display()))?;
+        Self::from_yaml_str_for_language(&content, language)
+    }
+
+    pub fn jsts_rules_from_file(path: &Path) -> Result<Vec<Self>, String> {
+        let specs = Self::load_specs_from_file(path)?;
+        Ok(specs
+            .into_iter()
+            .filter(|spec| spec.language == Language::JsTs)
+            .map(Self::new)
+            .collect())
+    }
+
+    pub fn jsts_rules_from_str(yaml: &str) -> Result<Vec<Self>, String> {
+        let specs = Self::load_specs_from_str(yaml)?;
+        Ok(specs
+            .into_iter()
+            .filter(|spec| spec.language == Language::JsTs)
+            .map(Self::new)
+            .collect())
+    }
+
+    pub fn java_rules_from_file(path: &Path) -> Result<Vec<Self>, String> {
+        let specs = Self::load_specs_from_file(path)?;
+        Ok(specs
+            .into_iter()
+            .filter(|spec| spec.language == Language::Java)
+            .map(Self::new)
+            .collect())
+    }
+
+    pub fn java_rules_from_str(yaml: &str) -> Result<Vec<Self>, String> {
+        let specs = Self::load_specs_from_str(yaml)?;
+        Ok(specs
+            .into_iter()
+            .filter(|spec| spec.language == Language::Java)
+            .map(Self::new)
+            .collect())
+    }
+}
+
+/// Evaluates `language: java` Refaster YAML rules against a single Java source file
+/// using `AstGrepJavaAdapter` (`tree-sitter-java`).
+pub fn evaluate_java_refaster_rules(
+    file_id: FileId,
+    relative_path: &str,
+    source: &str,
+    rules: &[RefasterYamlRule],
+) -> Vec<Diagnostic> {
+    if rules.is_empty() {
+        return Vec::new();
+    }
+    let matcher = AstGrepJavaAdapter;
+    let oracle = NoOpTypeOracle;
+    let stored_root = StoredNode {
+        id: NodeId(0),
+        kind: NodeKind::Module,
+        range: TextRange::new(0, source.len() as u32),
+        parent: None,
+        children: Vec::new(),
+        meta: NodeMeta::None,
+    };
+    let root_node = CanonicalNode {
+        id: NodeId(0),
+        kind: NodeKind::Module,
+        range: TextRange::new(0, source.len() as u32),
+        parent: None,
+        raw_text: source,
+    };
+    let tree = CanonicalSyntaxTree::new(file_id, source.to_string(), vec![stored_root], Vec::new());
+    let view = AnalysisView {
+        file_id,
+        file_path: relative_path,
+        tree: &tree,
+        oracle: &oracle,
+        pattern_matcher: Some(&matcher),
+    };
+    let line_index = LineIndex::new(source);
+    let mut out = Vec::new();
+    for rule in rules {
+        if rule.language() != Language::Java {
+            continue;
+        }
+        for d in rule.evaluate(&root_node, &view) {
+            let line = line_index.line_of(d.range.start);
+            let line_text = line_index.line_slice(source, line);
+            if is_jsts_line_suppressed(line_text, &d.rule_id) {
+                continue;
+            }
+            out.push(d);
+        }
+    }
+    out
+}
+
+/// `LanguageAnalyzerPort` executing custom `language: java` Refaster YAML rule packs.
+pub struct JavaRefasterAnalyzer {
+    pub rules: Vec<RefasterYamlRule>,
+}
+
+impl LanguageAnalyzerPort for JavaRefasterAnalyzer {
+    fn language(&self) -> Language {
+        Language::Java
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["java"]
+    }
+
+    fn max_fixpoint_passes(&self) -> usize {
+        3
+    }
+
+    fn analyze_pass(&self, req: &AnalyzePassRequest<'_>) -> Result<AnalyzePassResponse, String> {
+        let mut diagnostics = Vec::new();
+        let mut files_analyzed = 0usize;
+        for wf in req.files {
+            if let Some(scopes) = req.scoped_ranges
+                && !scopes.contains_key(&wf.file_id)
+            {
+                continue;
+            }
+            files_analyzed += 1;
+            let mut diags =
+                evaluate_java_refaster_rules(wf.file_id, &wf.relative_path, &wf.source, &self.rules);
+            if let Some(scopes) = req.scoped_ranges {
+                let allowed = scopes.get(&wf.file_id).map(Vec::as_slice).unwrap_or(&[]);
+                diags.retain(|d| allowed.iter().any(|sp| sp.intersects(d.range)));
+            }
+            diagnostics.extend(diags);
+        }
+        Ok(AnalyzePassResponse {
+            diagnostics,
+            provenance: AnalysisProvenance {
+                language: Language::Java,
+                tier: AnalysisTier::Tier1Syntactic,
+                files_analyzed,
+                runtime_detail: Some(format!(
+                    "tree-sitter-java refaster ({} custom YAML rule(s))",
+                    self.rules.len()
+                )),
+                degraded_reason: None,
+                remediation_hint: None,
+            },
+        })
+    }
+}
+
+struct NoOpTypeOracle;
+
+impl TypeOraclePort for NoOpTypeOracle {
+    fn index_workspace(&self, _files: &[WorkspaceFile]) {}
+    fn type_of(&self, _file: FileId, _range: TextRange) -> CanonicalType {
+        CanonicalType::Unknown
+    }
+    fn resolve_fqname(&self, _file: FileId, _range: TextRange) -> Option<String> {
+        None
+    }
+    fn can_be_none(&self, _file: FileId, _range: TextRange) -> TriState {
+        TriState::Unknown
+    }
+    fn expression_purity(&self, _file: FileId, _range: TextRange) -> Purity {
+        Purity::SideEffecting
+    }
+    fn is_subtype(&self, _sub: &CanonicalType, _sup: &CanonicalType) -> TriState {
+        TriState::Unknown
+    }
+    fn reverse_dependents(&self, _file: FileId, _changed: &[TextRange]) -> Vec<(FileId, TextRange)> {
+        Vec::new()
+    }
+}
+
+/// Evaluates `language: jsts` Refaster YAML rules against a single JS/TS source file using
+/// `AstGrepJsTsAdapter` (`TypeScript` / `Tsx` / `JavaScript` grammar inferred from extension).
+pub fn evaluate_jsts_refaster_rules(
+    file_id: FileId,
+    file_path: &Path,
+    relative_path: &str,
+    source: &str,
+    rules: &[RefasterYamlRule],
+) -> Vec<Diagnostic> {
+    if rules.is_empty() {
+        return Vec::new();
+    }
+    let matcher = AstGrepJsTsAdapter::for_path(file_path);
+    let oracle = NoOpTypeOracle;
+    let stored_root = StoredNode {
+        id: NodeId(0),
+        kind: NodeKind::Module,
+        range: TextRange::new(0, source.len() as u32),
+        parent: None,
+        children: Vec::new(),
+        meta: NodeMeta::None,
+    };
+    let root_node = CanonicalNode {
+        id: NodeId(0),
+        kind: NodeKind::Module,
+        range: TextRange::new(0, source.len() as u32),
+        parent: None,
+        raw_text: source,
+    };
+    let tree = CanonicalSyntaxTree::new(file_id, source.to_string(), vec![stored_root], Vec::new());
+    let view = AnalysisView {
+        file_id,
+        file_path: relative_path,
+        tree: &tree,
+        oracle: &oracle,
+        pattern_matcher: Some(&matcher),
+    };
+    let line_index = LineIndex::new(source);
+    let mut out = Vec::new();
+    for rule in rules {
+        if rule.language() != Language::JsTs {
+            continue;
+        }
+        let diags = rule.evaluate(&root_node, &view);
+        for d in diags {
+            let line = line_index.line_of(d.range.start);
+            let line_text = line_index.line_slice(source, line);
+            if is_jsts_line_suppressed(line_text, &d.rule_id) {
+                continue;
+            }
+            if line > 1 {
+                let prev_text = line_index.line_slice(source, line - 1);
+                if is_jsts_line_suppressed(prev_text, &d.rule_id) {
+                    continue;
+                }
+            }
+            out.push(d);
+        }
+    }
+    out
+}
+
+fn is_jsts_line_suppressed(line_text: &str, rule_id: &str) -> bool {
+    let Some(comment_idx) = line_text.find("//") else {
+        return false;
+    };
+    let comment = line_text[comment_idx + 2..].trim();
+    let Some(rest) = comment.strip_prefix("riffty:") else {
+        return false;
+    };
+    let rest = rest.trim();
+    if let Some(after_ignore) = rest.strip_prefix("ignore") {
+        let after_ignore = after_ignore.trim();
+        if let Some(inner) = after_ignore.strip_prefix('[')
+            && let Some(end) = inner.find(']')
+        {
+            return inner[..end]
+                .split(',')
+                .any(|tok| tok.trim().eq_ignore_ascii_case(rule_id) || tok.trim() == "*");
+        }
+        if after_ignore.is_empty() || after_ignore.starts_with("--") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Minimal Tier 1 JS/TS analyzer for Milestone 0 that evaluates `language: jsts` Refaster YAML rules.
+#[derive(Default)]
+pub struct JsTsRefasterAnalyzer {
+    pub rules: Vec<RefasterYamlRule>,
+}
+
+impl LanguageAnalyzerPort for JsTsRefasterAnalyzer {
+    fn language(&self) -> Language {
+        Language::JsTs
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        Language::JSTS_EXTENSIONS
+    }
+
+    fn analyze_pass(&self, req: &AnalyzePassRequest<'_>) -> Result<AnalyzePassResponse, String> {
+        let mut loaded_rules: Vec<RefasterYamlRule> = Vec::new();
+        for rp in req.rules_paths {
+            loaded_rules.extend(RefasterYamlRule::jsts_rules_from_file(rp)?);
+        }
+        let active_rules: &[RefasterYamlRule] = if self.rules.is_empty() {
+            &loaded_rules
+        } else {
+            &self.rules
+        };
+
+        let mut diagnostics = Vec::new();
+        let mut files_analyzed = 0usize;
+        for wf in req.files {
+            if let Some(scopes) = req.scoped_ranges
+                && !scopes.contains_key(&wf.file_id)
+            {
+                continue;
+            }
+            files_analyzed += 1;
+            let mut diags = evaluate_jsts_refaster_rules(
+                wf.file_id,
+                &wf.path,
+                &wf.relative_path,
+                &wf.source,
+                active_rules,
+            );
+            if let Some(scopes) = req.scoped_ranges {
+                let allowed = scopes.get(&wf.file_id).map(Vec::as_slice).unwrap_or(&[]);
+                diags.retain(|d| allowed.iter().any(|sp| sp.intersects(d.range)));
+            }
+            diagnostics.extend(diags);
+        }
+
+        Ok(AnalyzePassResponse {
+            diagnostics,
+            provenance: AnalysisProvenance {
+                language: Language::JsTs,
+                tier: AnalysisTier::Tier1Syntactic,
+                files_analyzed,
+                runtime_detail: Some("ast-grep (jsts refaster)".to_string()),
+                degraded_reason: Some(
+                    "Tier 2 JS/TS semantic checker not active; syntactic Refaster rules only"
+                        .to_string(),
+                ),
+                remediation_hint: Some(
+                    "Install node_modules (`npm ci --ignore-scripts`) and enable Tier 2 tsrs"
+                        .to_string(),
+                ),
+            },
+        })
     }
 }
 
@@ -1166,5 +1539,63 @@ rules:
         assert!(out.contains("e = ','.join(fixed_pair)"), "got:\n{out}");
         assert!(out.contains("f = ','.join(str_list)"), "got:\n{out}");
         assert!(out.contains("g = consume_seq(int_tuple)"), "got:\n{out}");
+    }
+
+    #[test]
+    fn req_m0_04_refaster_accepts_language_jsts_and_fixes_ts_tsx_js() {
+        let yaml = r#"
+rules:
+  - id: JSTS-REF-001
+    name: nan-equality-refaster
+    language: jsts
+    severity: error
+    applicability: safe
+    message: "Use Number.isNaN($X) instead of $X === NaN"
+    pattern: "$X === NaN"
+    replace: "Number.isNaN($X)"
+"#;
+        let rules = RefasterYamlRule::jsts_rules_from_str(yaml).expect("parse jsts yaml");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].language(), Language::JsTs);
+
+        let mut registry = riffty_pipeline::AnalyzerRegistry::new();
+        registry.register(JsTsRefasterAnalyzer { rules });
+        let orch = riffty_pipeline::WorkspaceOrchestrator {
+            registry: &registry,
+        };
+        let files = vec![
+            WorkspaceFile {
+                file_id: FileId(1),
+                path: PathBuf::from("src/math.ts"),
+                relative_path: "src/math.ts".to_string(),
+                source: "export function bad(x: number): boolean { return x === NaN; }\n".to_string(),
+            },
+            WorkspaceFile {
+                file_id: FileId(2),
+                path: PathBuf::from("src/View.tsx"),
+                relative_path: "src/View.tsx".to_string(),
+                source: "export const C = ({ n }: { n: number }) => <span>{n === NaN}</span>;\n"
+                    .to_string(),
+            },
+        ];
+
+        let out = orch
+            .run(
+                Path::new("."),
+                &files,
+                &[],
+                PipelineConfig {
+                    apply_fixes: true,
+                    allow_unsafe_fixes: false,
+                    max_passes: 5,
+                },
+                None,
+            )
+            .expect("orchestrator ok");
+
+        assert_eq!(out.provenance.len(), 1);
+        assert_eq!(out.provenance[0].language, Language::JsTs);
+        assert!(out.files[0].final_source.contains("return Number.isNaN(x);"));
+        assert!(out.files[1].final_source.contains("<span>{Number.isNaN(n)}</span>"));
     }
 }

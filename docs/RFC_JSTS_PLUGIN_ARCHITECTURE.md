@@ -134,13 +134,13 @@ riffty/crates/
 **Goal:** Wire `Language::JsTs` cleanly into `riffty_core`, `riffty_pipeline`, `WorkspaceResolver`, `riffty_adapter_ast_grep`, `riffty_adapter_refaster`, `riffty_cli`, and `riffty_mcp` with zero regression on existing Python and Java suites.
 
 #### Milestone 0 Requirements & Verification Checklist
-- [ ] `REQ-M0-01`: `Language::JsTs` added to `riffty_core::Language` with `as_str() == "jsts"` and `from_extension` mapping `ts`, `tsx`, `mts`, `cts`, `js`, `jsx`, `mjs`, `cjs` (case-insensitive). *Verify:* `cargo test -p riffty_core`.
-- [ ] `REQ-M0-02`: `WorkspaceResolver` in `riffty_adapter_fs` walks upward from nested JS/TS files and recognizes `riffty.toml` > `pnpm-workspace.yaml` / `turbo.json` / root `package.json` (`workspaces`) / `tsconfig.json` > `.git`. *Verify:* unit test with 5-level nested `.ts` file resolves monorepo root deterministically.
-- [ ] `REQ-M0-03`: `WorkspaceVfsPort::discover_files` automatically excludes `node_modules/`, `.next/`, `dist/`, `build/`, `.turbo/`, `coverage/`, and `.git/` without descending into `node_modules`. *Verify:* unit test with dummy `node_modules/pkg/index.ts` confirms 0 files discovered inside `node_modules`.
-- [ ] `REQ-M0-04`: `riffty_adapter_ast_grep` enables `TypeScript`, `Tsx`, and `JavaScript` grammars and `riffty_adapter_refaster` accepts `language: jsts` YAML rules. *Verify:* `cargo test -p riffty_adapter_ast_grep -p riffty_adapter_refaster`.
-- [ ] `REQ-M0-05`: `riffty doctor` reports JS/TS workspace root, `tsconfig.json` path (if found), `node_modules` presence (read-only check), and zero Node.js/npm execution. *Verify:* `riffty doctor` JSON + text output test.
-- [ ] `REQ-M0-06`: Security invariant verified: `riffty mcp` rejects path traversal and option injection on JS/TS workspaces and never invokes `node`/`npm`/`pnpm`/`yarn`/`bun`. *Verify:* `cargo test -p riffty_mcp`.
-- [ ] `REQ-M0-07`: Zero regressions on all existing Python & Java tests (`cargo test --workspace` 100% green).
+- [x] `REQ-M0-01`: `Language::JsTs` added to `riffty_core::Language` with `as_str() == "jsts"` and `from_extension` mapping `ts`, `tsx`, `mts`, `cts`, `js`, `jsx`, `mjs`, `cjs` (case-insensitive). *Verify:* `cargo test -p riffty_core`.
+- [x] `REQ-M0-02`: `WorkspaceResolver` in `riffty_adapter_fs` walks upward from nested JS/TS files and recognizes `riffty.toml` > `pnpm-workspace.yaml` / `turbo.json` / root `package.json` (`workspaces`) / `tsconfig.json` > `.git`. *Verify:* unit test with 5-level nested `.ts` file resolves monorepo root deterministically.
+- [x] `REQ-M0-03`: `WorkspaceVfsPort::discover_files` automatically excludes `node_modules/`, `.next/`, `dist/`, `build/`, `.turbo/`, `coverage/`, and `.git/` without descending into `node_modules`. *Verify:* unit test with dummy `node_modules/pkg/index.ts` confirms 0 files discovered inside `node_modules`.
+- [x] `REQ-M0-04`: `riffty_adapter_ast_grep` enables `TypeScript`, `Tsx`, and `JavaScript` grammars and `riffty_adapter_refaster` accepts `language: jsts` YAML rules. *Verify:* `cargo test -p riffty_adapter_ast_grep -p riffty_adapter_refaster`.
+- [x] `REQ-M0-05`: `riffty doctor` reports JS/TS workspace root, `tsconfig.json` path (if found), `node_modules` presence (read-only check), and zero Node.js/npm execution. *Verify:* `riffty doctor` JSON + text output test.
+- [x] `REQ-M0-06`: Security invariant verified: `riffty mcp` rejects path traversal and option injection on JS/TS workspaces and never invokes `node`/`npm`/`pnpm`/`yarn`/`bun`. *Verify:* `cargo test -p riffty_mcp`.
+- [x] `REQ-M0-07`: Zero regressions on all existing Python & Java tests (`cargo test --workspace` 100% green).
 
 #### Milestone 0 Proposed Real-Life OSS Validation Scenarios (Parallel Subagents)
 1. **Scenario 0.1 (`WorkspaceResolver` + `node_modules` exclusion + YAML Refaster `--fix --dry-run`):** `vercel/ai` (deeply nested monorepo package `packages/ai/src/...` — verify upward root resolution + custom JS/TS YAML Refaster dry-run diff with 0 disk writes).

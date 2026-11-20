@@ -17,8 +17,19 @@ static TMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub enum WorkspaceMarker {
     RifftyToml,
     JavaBuildRoot,
+    JsTsWorkspaceRoot,
     GitRoot,
     TargetFallback,
+}
+
+fn package_json_has_workspaces(path: &Path) -> bool {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    val.get("workspaces").is_some_and(|w| !w.is_null())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,7 +48,8 @@ impl WorkspaceResolver {
     /// Walks upward from `target_path` (or its parent directory if it is a file) to find the
     /// highest-priority workspace root marker:
     /// 1. `riffty.toml`
-    /// 2. `settings.gradle` / `settings.gradle.kts` / outermost `pom.xml`
+    /// 2. `settings.gradle` / `settings.gradle.kts` / outermost `pom.xml` (Java)
+    ///    or `pnpm-workspace.yaml` / `turbo.json` / root `package.json` (`workspaces`) / `tsconfig.json` / `jsconfig.json` (JS/TS)
     /// 3. `.git`
     /// 4. Fallback: `target_path` itself (or parent dir for a file).
     pub fn resolve(target_path: &Path) -> ResolvedWorkspace {
@@ -59,6 +71,8 @@ impl WorkspaceResolver {
         };
 
         let mut best_java_root: Option<PathBuf> = None;
+        let mut best_jsts_monorepo_root: Option<PathBuf> = None;
+        let mut best_jsts_config_root: Option<PathBuf> = None;
         let mut best_git_root: Option<PathBuf> = None;
 
         for ancestor in start_dir.ancestors() {
@@ -78,6 +92,18 @@ impl WorkspaceResolver {
                 best_java_root = Some(ancestor.to_path_buf());
             }
 
+            let pkg_json = ancestor.join("package.json");
+            if ancestor.join("pnpm-workspace.yaml").is_file()
+                || ancestor.join("turbo.json").is_file()
+                || (pkg_json.is_file() && package_json_has_workspaces(&pkg_json))
+            {
+                best_jsts_monorepo_root = Some(ancestor.to_path_buf());
+            } else if ancestor.join("tsconfig.json").is_file()
+                || ancestor.join("jsconfig.json").is_file()
+            {
+                best_jsts_config_root = Some(ancestor.to_path_buf());
+            }
+
             if best_git_root.is_none() && ancestor.join(".git").exists() {
                 best_git_root = Some(ancestor.to_path_buf());
                 // Do not walk past the git repository root for build markers.
@@ -90,6 +116,14 @@ impl WorkspaceResolver {
                 root: java_root,
                 target: abs_target,
                 marker: WorkspaceMarker::JavaBuildRoot,
+            };
+        }
+
+        if let Some(jsts_root) = best_jsts_monorepo_root.or(best_jsts_config_root) {
+            return ResolvedWorkspace {
+                root: jsts_root,
+                target: abs_target,
+                marker: WorkspaceMarker::JsTsWorkspaceRoot,
             };
         }
 
@@ -185,6 +219,9 @@ impl WorkspaceVfsPort for FsWorkspaceAdapter {
             .standard_filters(true)
             .hidden(true)
             .filter_entry(|entry| {
+                if entry.depth() == 0 {
+                    return true;
+                }
                 let name = entry.file_name().to_string_lossy();
                 !matches!(
                     name.as_ref(),
@@ -193,8 +230,12 @@ impl WorkspaceVfsPort for FsWorkspaceAdapter {
                         | "venv"
                         | "__pycache__"
                         | "node_modules"
-                        | "target"
+                        | ".next"
+                        | "dist"
                         | "build"
+                        | ".turbo"
+                        | "coverage"
+                        | "target"
                         | ".gradle"
                         | ".riffty"
                 )
@@ -361,7 +402,17 @@ impl GitDiffPort for FsWorkspaceAdapter {
                 cmd.arg(format!("{base_ref}...HEAD"));
             }
         }
-        cmd.arg("--").arg("*.py").arg("*.java");
+        cmd.arg("--")
+            .arg("*.py")
+            .arg("*.java")
+            .arg("*.ts")
+            .arg("*.tsx")
+            .arg("*.mts")
+            .arg("*.cts")
+            .arg("*.js")
+            .arg("*.jsx")
+            .arg("*.mjs")
+            .arg("*.cjs");
 
         let output = cmd
             .output()
@@ -545,6 +596,85 @@ mod tests {
         let r3 = WorkspaceResolver::resolve(&java_file);
         assert_eq!(r3.marker, WorkspaceMarker::RifftyToml);
         assert_eq!(r3.root, svc_dir);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn req_m0_02_workspace_resolver_jsts_monorepo_priority_5_levels_deep() {
+        let root = make_temp_dir("jsts_resolver");
+        // 5 levels nested: packages/ai/src/core/util/client.ts
+        let nested = root.join("packages/ai/src/core/util");
+        fs::create_dir_all(&nested).unwrap();
+        let ts_file = nested.join("client.ts");
+        fs::write(&ts_file, "export const x = 1;\n").unwrap();
+
+        // 1. .git only
+        fs::create_dir_all(root.join(".git")).unwrap();
+        let r_git = WorkspaceResolver::resolve(&ts_file);
+        assert_eq!(r_git.marker, WorkspaceMarker::GitRoot);
+        assert_eq!(r_git.root, root);
+
+        // 2. Local package tsconfig.json beats .git
+        let pkg_dir = root.join("packages/ai");
+        fs::write(pkg_dir.join("tsconfig.json"), "{}\n").unwrap();
+        let r_tsc = WorkspaceResolver::resolve(&ts_file);
+        assert_eq!(r_tsc.marker, WorkspaceMarker::JsTsWorkspaceRoot);
+        assert_eq!(r_tsc.root, pkg_dir);
+
+        // 3. Root package.json with `workspaces` beats nested tsconfig.json
+        fs::write(
+            root.join("package.json"),
+            r#"{"name":"mono","workspaces":["packages/*"]}"#,
+        )
+        .unwrap();
+        let r_pkg_ws = WorkspaceResolver::resolve(&ts_file);
+        assert_eq!(r_pkg_ws.marker, WorkspaceMarker::JsTsWorkspaceRoot);
+        assert_eq!(r_pkg_ws.root, root);
+
+        // 4. turbo.json / pnpm-workspace.yaml also anchor monorepo root
+        fs::write(root.join("package.json"), r#"{"name":"mono"}"#).unwrap();
+        fs::write(root.join("pnpm-workspace.yaml"), "packages:\n  - packages/*\n").unwrap();
+        let r_pnpm = WorkspaceResolver::resolve(&ts_file);
+        assert_eq!(r_pnpm.marker, WorkspaceMarker::JsTsWorkspaceRoot);
+        assert_eq!(r_pnpm.root, root);
+
+        // 5. riffty.toml wins over everything
+        fs::write(pkg_dir.join("riffty.toml"), "exclude = []\n").unwrap();
+        let r_toml = WorkspaceResolver::resolve(&ts_file);
+        assert_eq!(r_toml.marker, WorkspaceMarker::RifftyToml);
+        assert_eq!(r_toml.root, pkg_dir);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn req_m0_03_discover_files_excludes_node_modules_and_jsts_build_dirs() {
+        let root = make_temp_dir("jsts_discover");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/app.ts"), "export const a = 1;\n").unwrap();
+        fs::write(root.join("src/view.tsx"), "export const v = <div />;\n").unwrap();
+
+        for excluded in [
+            "node_modules/pkg",
+            ".next/static",
+            "dist/esm",
+            "build/out",
+            ".turbo/cache",
+            "coverage/lcov",
+            ".git/hooks",
+        ] {
+            let dir = root.join(excluded);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("index.ts"), "export const ignored = true;\n").unwrap();
+        }
+
+        let adapter = FsWorkspaceAdapter;
+        let files = adapter
+            .discover_files(&root, riffty_core::Language::JSTS_EXTENSIONS)
+            .unwrap();
+        let rels: Vec<&str> = files.iter().map(|f| f.relative_path.as_str()).collect();
+        assert_eq!(rels, vec!["src/app.ts", "src/view.tsx"]);
 
         let _ = fs::remove_dir_all(&root);
     }

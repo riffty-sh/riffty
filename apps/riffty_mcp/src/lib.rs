@@ -3,11 +3,16 @@ use std::sync::Arc;
 
 use riffty_adapter_ast_grep::AstGrepAdapter;
 use riffty_adapter_fs::FsWorkspaceAdapter;
-use riffty_adapter_refaster::RefasterYamlRule;
+use riffty_adapter_java_fast::JavaFastAnalyzer;
+use riffty_adapter_plugin::{JavaPluginAdapter, discover_java_sidecar_bundle};
+use riffty_adapter_refaster::{JsTsRefasterAnalyzer, RefasterYamlRule};
 use riffty_adapter_ruff_ast::{RuffAstAdapter, RuffImportAdapter};
 use riffty_adapter_ty::TyOracleAdapter;
-use riffty_core::RulePlugin;
-use riffty_pipeline::{ReviewChangesRequest, ReviewFacade, ReviewVerdict, RifftyEngine};
+use riffty_core::{AnalysisTier, Language, RulePlugin};
+use riffty_pipeline::{
+    AnalyzerRegistry, MultiLanguageReviewFacade, PythonLanguageAnalyzer, ReviewChangesRequest,
+    ReviewVerdict, RifftyEngine,
+};
 use riffty_rules_builtin::builtin_rules;
 use rmcp::model::{
     CallToolRequestMethod, CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
@@ -101,11 +106,11 @@ impl RifftyMcpServer {
 
         Tool::new(
             REVIEW_TOOL_NAME,
-            "Deterministic type-aware Python diff reviewer and surgical byte-offset auto-healer. Extracts touched git diff spans, expands blast radius via reverse_dependents, suppresses baseline noise, optionally heals Safe fixes on disk, and returns a compact APPROVED/REQUEST_CHANGES JSON verdict.",
+            "Deterministic type-aware Python & Java diff reviewer and surgical byte-offset auto-healer. Extracts touched git diff spans, expands blast radius via reverse_dependents, suppresses baseline noise, optionally heals Safe fixes on disk, and returns a compact APPROVED/REQUEST_CHANGES JSON verdict with provenance.",
             schema_obj,
         )
         .with_annotations(
-            ToolAnnotations::with_title("Review & Auto-Heal Python Diff")
+            ToolAnnotations::with_title("Review & Auto-Heal Python & Java Diff")
                 .read_only(false)
                 .destructive(false)
                 .idempotent(true)
@@ -163,7 +168,8 @@ pub fn execute_review_request(
     execute_review_request_with_venv(workspace_root, rules_path, None, request)
 }
 
-/// Executes `ReviewFacade::review_changes` with an optional Python virtual environment for `.pyi` stubs.
+/// Executes multi-language (`Python` + `Java`) diff review with Safe-only auto-heal
+/// and zero build-tool execution.
 pub fn execute_review_request_with_venv(
     workspace_root: &Path,
     rules_path: Option<&Path>,
@@ -177,27 +183,51 @@ pub fn execute_review_request_with_venv(
     let fs_adapter = FsWorkspaceAdapter;
 
     let mut rules: Vec<Box<dyn RulePlugin>> = builtin_rules();
+    let mut jsts_rules: Vec<RefasterYamlRule> = Vec::new();
+    let mut rules_paths: Vec<PathBuf> = Vec::new();
     if let Some(yaml_path) = rules_path {
-        let extra = RefasterYamlRule::from_yaml_file(yaml_path)?;
+        let extra = RefasterYamlRule::from_yaml_file_for_language(yaml_path, Language::Python)?;
         rules.extend(extra);
+        jsts_rules.extend(RefasterYamlRule::jsts_rules_from_file(yaml_path)?);
+        rules_paths.push(yaml_path.to_path_buf());
     }
 
-    let engine = RifftyEngine {
-        parser: &parser,
-        oracle: &oracle,
-        import_manager: &import_mgr,
-        pattern_matcher: Some(&matcher),
-        rules,
-    };
+    let mut registry = AnalyzerRegistry::new();
+    registry.register(PythonLanguageAnalyzer {
+        engine: RifftyEngine {
+            parser: &parser,
+            oracle: &oracle,
+            import_manager: &import_mgr,
+            pattern_matcher: Some(&matcher),
+            rules,
+        },
+        tier: AnalysisTier::Tier2Semantic,
+        runtime_detail: Some("ruff-ast + ty".to_string()),
+    });
 
-    let facade = ReviewFacade {
-        engine: &engine,
+    if let Some(bundle) = discover_java_sidecar_bundle() {
+        registry.register(JavaPluginAdapter {
+            bundle,
+            extra_classpath: Vec::new(),
+            use_daemon: false,
+            daemon_socket: None,
+            architecture_forbid: Vec::new(),
+            allow_build_tool: false,
+        });
+    } else {
+        registry.register(JavaFastAnalyzer);
+    }
+
+    registry.register(JsTsRefasterAnalyzer { rules: jsts_rules });
+
+    let facade = MultiLanguageReviewFacade {
+        registry: &registry,
         vfs: &fs_adapter,
         patch_applier: &fs_adapter,
         git_diff: &fs_adapter,
     };
 
-    facade.review_changes(workspace_root, request)
+    facade.review_changes(workspace_root, &rules_paths, request)
 }
 
 impl ServerHandler for RifftyMcpServer {
@@ -345,6 +375,100 @@ mod tests {
 
         let rel_escape = resolve_contained_workspace_root(&root, Some("..")).unwrap_err();
         assert!(rel_escape.contains("security boundary violation"));
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn req_m0_06_mcp_jsts_blocks_traversal_and_option_injection_and_heals_staged_diff() {
+        let root = make_temp_dir("jsts_mcp_gate");
+        let outside = make_temp_dir("jsts_mcp_outside");
+
+        // 1. Path traversal blocked on JS/TS workspace
+        let escape_err = resolve_contained_workspace_root(&root, Some("../"))
+            .unwrap_err();
+        assert!(escape_err.contains("security boundary violation"));
+        let abs_escape =
+            resolve_contained_workspace_root(&root, Some(outside.to_str().unwrap())).unwrap_err();
+        assert!(abs_escape.contains("security boundary violation"));
+
+        // 2. Initialize git repo with a TS file and malicious package.json (never executed!)
+        let run_git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .expect("git command");
+            assert!(
+                out.status.success(),
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        run_git(&["init", "-q"]);
+        run_git(&["config", "user.email", "test@riffty.sh"]);
+        run_git(&["config", "user.name", "Riffty Test"]);
+
+        std::fs::write(
+            root.join("package.json"),
+            r#"{"name":"evil","scripts":{"postinstall":"exit 99"}}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/check.ts"),
+            "export function isBad(x: number): boolean {\n  return false;\n}\n",
+        )
+        .unwrap();
+        run_git(&["add", "."]);
+        run_git(&["commit", "-q", "-m", "initial"]);
+
+        // 3. Option injection via `base_ref` must be rejected
+        let inj_req = ReviewChangesRequest {
+            target: "branch_diff".to_string(),
+            base_ref: "--output=/tmp/pwned".to_string(),
+            auto_heal: true,
+        };
+        let inj_err = execute_review_request(&root, None, &inj_req).unwrap_err();
+        assert!(inj_err.contains("invalid git ref"));
+
+        // 4. Stage a buggy JS/TS edit and verify MCP heals it via JS/TS Refaster YAML
+        let rules_file = root.join("jsts_rules.yml");
+        std::fs::write(
+            &rules_file,
+            r#"rules:
+  - id: JSTS-REF-NAN
+    name: nan-equality
+    language: jsts
+    severity: error
+    applicability: safe
+    message: "Use Number.isNaN($X)"
+    pattern: "$X === NaN"
+    replace: "Number.isNaN($X)"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/check.ts"),
+            "export function isBad(x: number): boolean {\n  return x === NaN;\n}\n",
+        )
+        .unwrap();
+        run_git(&["add", "src/check.ts"]);
+
+        let staged_req = ReviewChangesRequest {
+            target: "staged".to_string(),
+            base_ref: "main".to_string(),
+            auto_heal: true,
+        };
+        let verdict =
+            execute_review_request(&root, Some(&rules_file), &staged_req).expect("mcp review ok");
+        assert_eq!(verdict.verdict, "APPROVED");
+        assert_eq!(verdict.summary.auto_healed_count, 1);
+        let healed = std::fs::read_to_string(root.join("src/check.ts")).unwrap();
+        assert!(healed.contains("return Number.isNaN(x);"), "got:\n{healed}");
 
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);

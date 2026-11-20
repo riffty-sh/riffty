@@ -12,12 +12,12 @@ use riffty_adapter_ast_grep::AstGrepAdapter;
 use riffty_adapter_fs::{FsWorkspaceAdapter, WorkspaceResolver};
 use riffty_adapter_java_fast::JavaFastAnalyzer;
 use riffty_adapter_plugin::{JavaPluginAdapter, discover_java_sidecar_bundle};
-use riffty_adapter_refaster::RefasterYamlRule;
+use riffty_adapter_refaster::{JavaRefasterAnalyzer, JsTsRefasterAnalyzer, RefasterYamlRule};
 use riffty_adapter_ruff_ast::{RuffAstAdapter, RuffImportAdapter};
 use riffty_adapter_ty::{NullTypeOracle, TyOracleAdapter};
 use riffty_core::{
-    AnalysisProvenance, AnalysisTier, ByteOffset, DiffTarget, FileId, GitDiffPort, LineIndex,
-    PatchApplierPort, RulePlugin, Severity, TextRange, TypeOraclePort, WorkspaceVfsPort,
+    AnalysisProvenance, AnalysisTier, ByteOffset, DiffTarget, FileId, GitDiffPort, Language,
+    LineIndex, PatchApplierPort, RulePlugin, Severity, TextRange, TypeOraclePort, WorkspaceVfsPort,
 };
 use riffty_pipeline::{
     AnalyzerRegistry, AppliedFixRecord, DEFAULT_MAX_FIXPOINT_PASSES, PipelineConfig,
@@ -129,6 +129,10 @@ struct CheckArgs {
     /// Custom Unix domain socket path for `--java-daemon`
     #[arg(long, env = "RIFFTY_JAVA_DAEMON_SOCKET")]
     java_daemon_socket: Option<PathBuf>,
+
+    /// Opt-in Level-1 build-tool classpath resolution (`mvn -o dependency:build-classpath`); never enabled in MCP
+    #[arg(long)]
+    allow_build_tool: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -141,11 +145,21 @@ struct ExplainArgs {
     list: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum DoctorFormat {
+    Text,
+    Json,
+}
+
 #[derive(Debug, clap::Args)]
 struct DoctorArgs {
     /// Target file or workspace directory to inspect
     #[arg(default_value = ".")]
     path: PathBuf,
+
+    /// Output format (`text` or `json`)
+    #[arg(long, value_enum, default_value_t = DoctorFormat::Text)]
+    format: DoctorFormat,
 }
 
 #[derive(Debug, clap::Args)]
@@ -215,13 +229,15 @@ async fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
-        Commands::Doctor(args) => match commands::run_doctor(&args.path) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(err) => {
-                eprintln!("riffty doctor error: {err}");
-                ExitCode::from(2)
+        Commands::Doctor(args) => {
+            match commands::run_doctor(&args.path, matches!(args.format, DoctorFormat::Json)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("riffty doctor error: {err}");
+                    ExitCode::from(2)
+                }
             }
-        },
+        }
         Commands::Mcp(args) => {
             let root = args
                 .workspace
@@ -277,10 +293,15 @@ fn run_check(args: CheckArgs) -> Result<bool, String> {
         };
 
     let mut rules: Vec<Box<dyn RulePlugin>> = builtin_rules();
+    let mut jsts_rules: Vec<RefasterYamlRule> = Vec::new();
+    let mut java_yaml_rules: Vec<RefasterYamlRule> = Vec::new();
     let mut rules_paths: Vec<PathBuf> = Vec::new();
     if let Some(ref yaml_path) = effective_rules {
-        let yaml_rules = RefasterYamlRule::from_yaml_file(yaml_path)?;
+        let yaml_rules =
+            RefasterYamlRule::from_yaml_file_for_language(yaml_path, Language::Python)?;
         rules.extend(yaml_rules);
+        jsts_rules.extend(RefasterYamlRule::jsts_rules_from_file(yaml_path)?);
+        java_yaml_rules.extend(RefasterYamlRule::java_rules_from_file(yaml_path)?);
         rules_paths.push(yaml_path.clone());
     }
 
@@ -317,10 +338,18 @@ fn run_check(args: CheckArgs) -> Result<bool, String> {
             use_daemon: args.java_daemon,
             daemon_socket: args.java_daemon_socket.clone(),
             architecture_forbid: toml_cfg.java.architecture.forbid.clone(),
+            allow_build_tool: args.allow_build_tool,
         });
     } else {
         registry.register(JavaFastAnalyzer);
     }
+    if !java_yaml_rules.is_empty() {
+        registry.register(JavaRefasterAnalyzer {
+            rules: java_yaml_rules,
+        });
+    }
+
+    registry.register(JsTsRefasterAnalyzer { rules: jsts_rules });
 
     let extensions = registry.supported_extensions();
     let mut workspace_files = fs_adapter.discover_files(&args.path, &extensions)?;

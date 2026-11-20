@@ -16,13 +16,20 @@ pub use ports::{
 pub enum Language {
     Python,
     Java,
+    #[serde(rename = "jsts", alias = "js", alias = "ts", alias = "javascript", alias = "typescript")]
+    JsTs,
 }
 
 impl Language {
+    pub const JSTS_EXTENSIONS: &'static [&'static str] = &[
+        "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs",
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Language::Python => "python",
             Language::Java => "java",
+            Language::JsTs => "jsts",
         }
     }
 
@@ -30,6 +37,7 @@ impl Language {
         match ext.to_ascii_lowercase().as_str() {
             "py" | "pyi" => Some(Language::Python),
             "java" => Some(Language::Java),
+            "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs" => Some(Language::JsTs),
             _ => None,
         }
     }
@@ -2207,5 +2215,30 @@ mod tests {
         assert_eq!(idx.line_slice(src, 2), "café = 2");
         assert_eq!(idx.line_slice(src, 3), "🚀 = 3");
         assert_eq!(idx.line_slice(src, 99), "");
+    }
+
+    #[test]
+    fn req_m0_01_language_jsts_str_serde_and_extensions() {
+        assert_eq!(Language::JsTs.as_str(), "jsts");
+        assert_eq!(
+            serde_json::to_string(&Language::JsTs).unwrap(),
+            "\"jsts\""
+        );
+        assert_eq!(
+            serde_json::from_str::<Language>("\"jsts\"").unwrap(),
+            Language::JsTs
+        );
+
+        for ext in ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "TS", "TSX", "MTS", "CTS", "JS", "JSX", "MJS", "CJS"] {
+            assert_eq!(
+                Language::from_extension(ext),
+                Some(Language::JsTs),
+                "expected Language::JsTs for extension `{ext}`"
+            );
+        }
+        assert_eq!(Language::from_extension("py"), Some(Language::Python));
+        assert_eq!(Language::from_extension("java"), Some(Language::Java));
+        assert_eq!(Language::from_extension("rs"), None);
+        assert_eq!(Language::from_extension("json"), None);
     }
 }

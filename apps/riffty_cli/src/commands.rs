@@ -1,10 +1,11 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use riffty_adapter_fs::WorkspaceResolver;
 use riffty_adapter_java_fast::{RuleDoc, java_fast_rule_catalog};
 use riffty_adapter_plugin::{discover_java_sidecar_bundle, verify_jar_sha256};
 use riffty_core::{Language, Severity};
+use serde::Serialize;
 
 use crate::config::RifftyTomlConfig;
 
@@ -118,7 +119,76 @@ pub fn run_explain(rule_id: Option<&str>, list: bool) -> Result<(), String> {
     Ok(())
 }
 
-pub fn run_doctor(target_path: &Path) -> Result<(), String> {
+#[derive(Debug, Clone, Serialize)]
+pub struct JsTsDoctorInfo {
+    pub workspace_root: String,
+    pub tsconfig_path: Option<String>,
+    pub package_json_path: Option<String>,
+    pub node_modules_present: bool,
+    pub zero_node_execution: bool,
+    pub tier1: String,
+    pub tier2: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DoctorReport {
+    pub version: String,
+    pub workspace_root: String,
+    pub workspace_marker: String,
+    pub config: String,
+    pub python_analyzer: String,
+    pub java_tier1: String,
+    pub java_tier2: String,
+    pub system_java: String,
+    pub system_javac: String,
+    pub jsts: JsTsDoctorInfo,
+    pub mcp_server: String,
+}
+
+fn find_nearest_file_within(start: &Path, root: &Path, filenames: &[&str]) -> Option<PathBuf> {
+    let start_dir = if start.is_file() {
+        start.parent().unwrap_or(start)
+    } else {
+        start
+    };
+    for ancestor in start_dir.ancestors() {
+        for name in filenames {
+            let candidate = ancestor.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        if ancestor == root {
+            break;
+        }
+    }
+    for name in filenames {
+        let candidate = root.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn detect_node_modules_present(start: &Path, root: &Path) -> bool {
+    let start_dir = if start.is_file() {
+        start.parent().unwrap_or(start)
+    } else {
+        start
+    };
+    for ancestor in start_dir.ancestors() {
+        if ancestor.join("node_modules").is_dir() {
+            return true;
+        }
+        if ancestor == root {
+            break;
+        }
+    }
+    root.join("node_modules").is_dir()
+}
+
+pub fn build_doctor_report(target_path: &Path) -> DoctorReport {
     let resolved = WorkspaceResolver::resolve(target_path);
     let toml_status = match RifftyTomlConfig::discover(&resolved.root) {
         Ok(cfg) => {
@@ -155,25 +225,88 @@ pub fn run_doctor(target_path: &Path) -> Result<(), String> {
         None => "Not installed (falling back to Tier 1 zero-JVM tree-sitter-java)".to_string(),
     };
 
-    println!("riffty doctor (v{})", env!("CARGO_PKG_VERSION"));
+    // Pure read-only filesystem checks for JS/TS (zero Node.js / npm / pnpm / yarn / bun execution).
+    let tsconfig_path = find_nearest_file_within(
+        &resolved.target,
+        &resolved.root,
+        &["tsconfig.json", "jsconfig.json"],
+    )
+    .map(|p| p.display().to_string());
+    let package_json_path =
+        find_nearest_file_within(&resolved.target, &resolved.root, &["package.json"])
+            .map(|p| p.display().to_string());
+    let node_modules_present = detect_node_modules_present(&resolved.target, &resolved.root);
+
+    DoctorReport {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        workspace_root: resolved.root.display().to_string(),
+        workspace_marker: format!("{:?}", resolved.marker),
+        config: toml_status,
+        python_analyzer: "Tier 2 Semantic (ruff-ast + ty, in-process)".to_string(),
+        java_tier1: format!(
+            "Active — tree-sitter-java (in-process, zero-JVM, {} rules)",
+            java_fast_rule_catalog().len()
+        ),
+        java_tier2: tier2_status,
+        system_java: java_version
+            .unwrap_or_else(|| "not found on PATH (not required for Tier 1)".to_string()),
+        system_javac: javac_version
+            .unwrap_or_else(|| "not found on PATH (not required for Tier 1)".to_string()),
+        jsts: JsTsDoctorInfo {
+            workspace_root: resolved.root.display().to_string(),
+            tsconfig_path,
+            package_json_path,
+            node_modules_present,
+            zero_node_execution: true,
+            tier1: "Active — ast-grep JS/TS Refaster (in-process, zero-Node.js)".to_string(),
+            tier2: "Pending Milestone 2 (tsrs TS7 Rust type checker)".to_string(),
+        },
+        mcp_server:
+            "Hardened (workspace containment + git ref validation + atomic patch + zero-Node.js)"
+                .to_string(),
+    }
+}
+
+pub fn run_doctor(target_path: &Path, json_output: bool) -> Result<(), String> {
+    let report = build_doctor_report(target_path);
+    if json_output {
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|e| format!("failed to serialize doctor report: {e}"))?;
+        println!("{json}");
+        return Ok(());
+    }
+
+    println!("riffty doctor (v{})", report.version);
     println!("------------------------------------------------------------");
-    println!("Workspace root:   {} ({:?})", resolved.root.display(), resolved.marker);
-    println!("Config:           {toml_status}");
-    println!("Python analyzer:  Tier 2 Semantic (ruff-ast + ty, in-process)");
     println!(
-        "Java Tier 1:      Active — tree-sitter-java (in-process, zero-JVM, {} rules)",
-        java_fast_rule_catalog().len()
+        "Workspace root:   {} ({})",
+        report.workspace_root, report.workspace_marker
     );
-    println!("Java Tier 2:      {tier2_status}");
+    println!("Config:           {}", report.config);
+    println!("Python analyzer:  {}", report.python_analyzer);
+    println!("Java Tier 1:      {}", report.java_tier1);
+    println!("Java Tier 2:      {}", report.java_tier2);
+    println!("System java:      {}", report.system_java);
+    println!("System javac:     {}", report.system_javac);
+    println!("JS/TS Tier 1:     {}", report.jsts.tier1);
+    println!("JS/TS Tier 2:     {}", report.jsts.tier2);
     println!(
-        "System java:      {}",
-        java_version.unwrap_or_else(|| "not found on PATH (not required for Tier 1)".to_string())
+        "JS/TS tsconfig:   {}",
+        report
+            .jsts
+            .tsconfig_path
+            .as_deref()
+            .unwrap_or("not found")
     );
     println!(
-        "System javac:     {}",
-        javac_version.unwrap_or_else(|| "not found on PATH (not required for Tier 1)".to_string())
+        "JS/TS node_mods:  {} (read-only check; zero Node.js/npm execution)",
+        if report.jsts.node_modules_present {
+            "present"
+        } else {
+            "absent"
+        }
     );
-    println!("MCP server:       Hardened (workspace containment + git ref validation + atomic patch)");
+    println!("MCP server:       {}", report.mcp_server);
     Ok(())
 }
 
@@ -187,5 +320,49 @@ fn detect_command_first_line(bin: &str, args: &[&str]) -> Option<String> {
         .map(str::trim)
         .find(|l| !l.is_empty())
         .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn req_m0_05_doctor_reports_jsts_root_tsconfig_node_modules_zero_node_exec() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("riffty_doctor_jsts_{nanos}"));
+        let nested = root.join("packages/web/src");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/typescript")).unwrap();
+        std::fs::write(root.join("pnpm-workspace.yaml"), "packages:\n  - packages/*\n").unwrap();
+        std::fs::write(root.join("packages/web/tsconfig.json"), "{}\n").unwrap();
+        let target = nested.join("app.ts");
+        std::fs::write(&target, "export const n = 1;\n").unwrap();
+
+        let report = build_doctor_report(&target);
+        assert_eq!(report.workspace_root, root.display().to_string());
+        assert_eq!(report.jsts.workspace_root, root.display().to_string());
+        assert_eq!(
+            report.jsts.tsconfig_path.as_deref(),
+            Some(root.join("packages/web/tsconfig.json").to_string_lossy().as_ref())
+        );
+        assert!(report.jsts.node_modules_present);
+        assert!(report.jsts.zero_node_execution);
+
+        // JSON serialization check
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["jsts"]["node_modules_present"], true);
+        assert_eq!(json["jsts"]["zero_node_execution"], true);
+        assert!(json["jsts"]["tsconfig_path"].as_str().unwrap().ends_with("tsconfig.json"));
+
+        // Text + JSON run_doctor both succeed
+        run_doctor(&target, false).expect("text doctor ok");
+        run_doctor(&target, true).expect("json doctor ok");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 
