@@ -1,6 +1,6 @@
 # RFC: `riffty-ab` — Deterministic A/B Empirical Verification Runner & Discovery CLI
 
-- **Status:** In Progress — Milestones 0–2 Complete (18/18 Requirements, 6/6 OSS Scenarios PASS)
+- **Status:** Implemented & Verified — Milestones 0–3 Complete (24/24 Requirements, 9/9 OSS Scenarios PASS)
 - **Target Repo:** `riffty` (`riffty-sh/riffty` — `crates/riffty_ab_core`, `apps/riffty_ab`)
 - **Validation Repo:** `riffty-assets` (`benchmarks/ab_runner_milestones/`)
 - **Precedents:** [`RFC_JAVA_PLUGIN_ARCHITECTURE.md`](./RFC_JAVA_PLUGIN_ARCHITECTURE.md), [`RFC_JSTS_PLUGIN_ARCHITECTURE.md`](./RFC_JSTS_PLUGIN_ARCHITECTURE.md)
@@ -289,9 +289,9 @@ timeout_secs = 120
 **Goal:** Prove `riffty-ab` end-to-end across all three `riffty` languages (Python, Java, JS/TS) on 100% unmodified upstream SHAs (`allow_dirty_baseline = false`), emit `PR_FOR_REVIEW.md` packs, integrate with `riffty-assets` CI, and verify zero regressions across the entire workspace.
 
 #### Milestone 3 Requirements & Verification Checklist
-- [ ] `REQ-M3-01`: Real-world **Python** OSS E2E validation via `riffty-ab run --allow-exec --emit-pr-review` on an unmodified upstream SHA (`allow_dirty_baseline = false`) with `pytest` JUnit XML parsing, verified by `riffty-ab verify-report`.
-- [ ] `REQ-M3-02`: Real-world **Java** OSS E2E validation via `riffty-ab run --allow-exec --emit-pr-review` on an unmodified upstream SHA (`allow_dirty_baseline = false`) with Maven/Gradle Surefire JUnit XML parsing, verified by `riffty-ab verify-report`.
-- [ ] `REQ-M3-03`: Real-world **JS/TS** OSS E2E validation via `riffty-ab run --allow-exec --emit-pr-review` on an unmodified upstream SHA (`allow_dirty_baseline = false`) with TAP or JUnit XML parsing + interleaved perf A/B/A/B, verified by `riffty-ab verify-report`.
-- [ ] `REQ-M3-04`: `riffty-assets/benchmarks/ab_runner_milestones/` contains `AB_MILESTONES_REPORT.md`, `README.md`, and per-case `ab-case.toml`, `ab_report.json`, `AB_REPORT.md`, `PR_FOR_REVIEW.md` (with zero `repo/`, `.venv/`, `node_modules/`, `target/` committed).
-- [ ] `REQ-M3-05`: `riffty-assets/README.md` and `riffty-assets/.github/workflows/benchmarks.yml` updated to register the `riffty-ab` suite and validate manifests/reports in CI.
-- [ ] `REQ-M3-06`: Final full-workspace gate: `RUSTFLAGS="-D warnings" cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings` 100% green, and both `riffty/` and `riffty-assets/` cleanly committed and pushed.
+- [x] `REQ-M3-01`: Real-world **Python** OSS E2E validation via `riffty-ab run --allow-exec --emit-pr-review` on an unmodified upstream SHA (`allow_dirty_baseline = false`) with `pytest` JUnit XML parsing, verified by `riffty-ab verify-report`.
+- [x] `REQ-M3-02`: Real-world **Java** OSS E2E validation via `riffty-ab run --allow-exec --emit-pr-review` on an unmodified upstream SHA (`allow_dirty_baseline = false`) with Maven/Gradle Surefire JUnit XML parsing, verified by `riffty-ab verify-report`.
+- [x] `REQ-M3-03`: Real-world **JS/TS** OSS E2E validation via `riffty-ab run --allow-exec --emit-pr-review` on an unmodified upstream SHA (`allow_dirty_baseline = false`) with TAP or JUnit XML parsing + interleaved perf A/B/A/B, verified by `riffty-ab verify-report`.
+- [x] `REQ-M3-04`: `riffty-assets/benchmarks/ab_runner_milestones/` contains `AB_MILESTONES_REPORT.md`, `README.md`, and per-case `ab-case.toml`, `ab_report.json`, `AB_REPORT.md`, `PR_FOR_REVIEW.md` (with zero `repo/`, `.venv/`, `node_modules/`, `target/` committed).
+- [x] `REQ-M3-05`: `riffty-assets/README.md` and `riffty-assets/.github/workflows/benchmarks.yml` updated to register the `riffty-ab` suite and validate manifests/reports in CI.
+- [x] `REQ-M3-06`: Final full-workspace gate: `RUSTFLAGS="-D warnings" cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings` 100% green, and both `riffty/` and `riffty-assets/` cleanly committed and pushed.
