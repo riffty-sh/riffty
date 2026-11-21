@@ -114,6 +114,34 @@ pub fn attest_baseline(
     ))
 }
 
+/// Captures exact unified diff of all tracked working-tree modifications.
+pub fn git_diff_unified(repo_dir: &Path) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(["diff", "--no-color"])
+        .output()
+        .map_err(|e| format!("failed to run git diff: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git diff failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Lists repo-relative paths of tracked files modified in the working tree.
+pub fn git_modified_files(repo_dir: &Path) -> Result<Vec<String>, String> {
+    let out = run_git(Some(repo_dir), &["diff", "--name-only"])?;
+    Ok(out
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

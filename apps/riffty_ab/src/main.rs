@@ -1,11 +1,16 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use riffty_ab_core::{AbManifest, Verdict, classify_vendored_or_generated};
 use serde::Serialize;
 
+mod executor;
 mod git_ops;
+mod riffty_invoker;
+mod runner;
+
+use executor::SandboxMode;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -28,6 +33,12 @@ enum Commands {
     Attest(AttestArgs),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum SandboxArg {
+    None,
+    Docker,
+}
+
 #[derive(Debug, clap::Args)]
 struct RunArgs {
     /// Path to declarative `ab-case.toml` manifest
@@ -41,9 +52,29 @@ struct RunArgs {
     #[arg(long)]
     plan_only: bool,
 
-    /// Existing local checkout directory to attest/use (optional; otherwise clones into workdir)
+    /// Existing local checkout directory to attest/use (optional; otherwise clones into temp workdir)
     #[arg(long)]
     repo_dir: Option<PathBuf>,
+
+    /// Directory where `ab_report.json`, `AB_REPORT.md`, `treatment.patch`, and optional `PR_FOR_REVIEW.md` are written
+    #[arg(long)]
+    out_dir: Option<PathBuf>,
+
+    /// Path to `riffty` binary (defaults to `RIFFTY_BIN`, sibling binary, or `PATH`)
+    #[arg(long, env = "RIFFTY_BIN")]
+    riffty_bin: Option<PathBuf>,
+
+    /// Optional command sandbox (`none` or `docker`)
+    #[arg(long, value_enum, default_value_t = SandboxArg::None)]
+    sandbox: SandboxArg,
+
+    /// Container image to use when `--sandbox docker` is selected
+    #[arg(long, default_value = "ubuntu:24.04")]
+    sandbox_image: String,
+
+    /// Emit human-gated `PR_FOR_REVIEW.md` alongside `ab_report.json` and `AB_REPORT.md`
+    #[arg(long)]
+    emit_pr_review: bool,
 
     /// Output format (`text` or `json`)
     #[arg(long, default_value = "text")]
@@ -265,29 +296,48 @@ fn run_ab_command(args: RunArgs) -> ExitCode {
         return ExitCode::from(4);
     }
 
-    if let Some(ref repo_dir) = args.repo_dir {
-        match git_ops::attest_baseline(
-            repo_dir,
-            &manifest.repo.commit_sha,
-            manifest.repo.tree_sha.as_deref(),
-            manifest.repo.allow_dirty_baseline,
-        ) {
-            Ok(att) if !att.attested => {
-                eprintln!(
-                    "VERDICT: {} ({})",
-                    Verdict::RejectedTampered,
-                    att.failure_reason.as_deref().unwrap_or("attestation failed")
+    let sandbox = match args.sandbox {
+        SandboxArg::None => SandboxMode::None,
+        SandboxArg::Docker => SandboxMode::Docker {
+            image: args.sandbox_image,
+        },
+    };
+
+    let opts = runner::AbRunOptions {
+        manifest_path: args.manifest,
+        repo_dir: args.repo_dir,
+        out_dir: args.out_dir,
+        riffty_bin: args.riffty_bin,
+        sandbox,
+        emit_pr_review: args.emit_pr_review,
+    };
+
+    match runner::execute_ab_run(&manifest, &opts) {
+        Ok(report) => {
+            if args.format == "json" {
+                println!("{}", report.to_json_pretty().unwrap_or_default());
+            } else {
+                println!("CASE:    {}", report.case_id);
+                println!("VERDICT: {}", report.verdict);
+                println!("REASON:  {}", report.verdict_reason);
+                println!(
+                    "ATTEST:  HEAD={} TREE={} clean={}",
+                    report.attestation.actual_head_sha,
+                    report.attestation.actual_tree_sha,
+                    report.attestation.working_tree_clean
                 );
-                return ExitCode::from(Verdict::RejectedTampered.exit_code());
+                if let Some(ref treat) = report.treatment {
+                    println!(
+                        "PATCH:   sha256={} healed={} idempotent={}",
+                        treat.patch_sha256, treat.auto_healed_count, treat.idempotent
+                    );
+                }
             }
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("riffty-ab attest error: {e}");
-                return ExitCode::from(2);
-            }
+            ExitCode::from(report.verdict.exit_code())
+        }
+        Err(e) => {
+            eprintln!("riffty-ab run error: {e}");
+            ExitCode::from(2)
         }
     }
-
-    eprintln!("riffty-ab: full A/B execution pipeline lands in Milestone 1.");
-    ExitCode::from(2)
 }

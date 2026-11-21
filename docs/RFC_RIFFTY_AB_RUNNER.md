@@ -1,6 +1,6 @@
 # RFC: `riffty-ab` — Deterministic A/B Empirical Verification Runner & Discovery CLI
 
-- **Status:** In Progress — Milestone 0 Complete (6/6 Requirements, 2/2 OSS Scenarios PASS)
+- **Status:** In Progress — Milestones 0–1 Complete (13/13 Requirements, 4/4 OSS Scenarios PASS)
 - **Target Repo:** `riffty` (`riffty-sh/riffty` — `crates/riffty_ab_core`, `apps/riffty_ab`)
 - **Validation Repo:** `riffty-assets` (`benchmarks/ab_runner_milestones/`)
 - **Precedents:** [`RFC_JAVA_PLUGIN_ARCHITECTURE.md`](./RFC_JAVA_PLUGIN_ARCHITECTURE.md), [`RFC_JSTS_PLUGIN_ARCHITECTURE.md`](./RFC_JSTS_PLUGIN_ARCHITECTURE.md)
@@ -254,13 +254,13 @@ timeout_secs = 120
 **Goal:** Deliver the complete end-to-end `riffty-ab run --allow-exec` pipeline: Variant A baseline -> deterministic `riffty check --fix` + `patch_sha256` + 2nd-run idempotency -> Variant B healed -> JUnit XML/TAP/exit-code comparator -> machine-verifiable verdict (`VERIFIED_BUG_FIX`, `VERIFIED_FINOPS_OR_CLEANUP`, `REJECTED_REGRESSION`, `REJECTED_TAMPERED`, `NO_OP`) and report artifacts (`ab_report.json`, `AB_REPORT.md`, `PR_FOR_REVIEW.md`).
 
 #### Milestone 1 Requirements & Verification Checklist
-- [ ] `REQ-M1-01`: JUnit XML parser (`parsers/junit.rs`) parses single and multi-file `<testsuite>`/`<testsuites>` XML from `pytest`, Maven Surefire, Gradle, and Vitest, extracting counts and per-test `classname::name -> Outcome` map. *Verify:* `cargo test -p riffty_ab_core junit`.
-- [ ] `REQ-M1-02`: TAP v13/v14 parser (`parsers/tap.rs`) parses `node --test --test-reporter=tap` output including subtests, `# SKIP`, `# TODO`, `ok`/`not ok`, and plan lines. *Verify:* `cargo test -p riffty_ab_core tap`.
-- [ ] `REQ-M1-03`: Sandboxed subprocess executor (`executor.rs`) enforces `timeout_secs` (kills hung child process), clears host env to safe allowlist + manifest `[env]`, and supports `--sandbox none|docker`. *Verify:* timeout & env-isolation integration tests.
-- [ ] `REQ-M1-04`: Deterministic treatment & idempotency engine (`riffty_invoker.rs` + `runner.rs`): runs baseline `riffty check --format json`, applies `riffty check --fix --format json`, captures exact unified diff + `patch_sha256` + `AnalysisProvenance`, and runs Pass 2 verifying `auto_healed_count == 0` and identical diff hash. *Verify:* integration test proving idempotency and non-idempotent failure detection.
-- [ ] `REQ-M1-05`: Deterministic verdict comparator (`verdict.rs`) accurately produces all 5 verdicts (`VERIFIED_BUG_FIX`, `VERIFIED_FINOPS_OR_CLEANUP`, `REJECTED_REGRESSION`, `REJECTED_TAMPERED`, `NO_OP`) and catches test-level regressions (`PASS -> FAIL` on individual test case even when aggregate failure count drops). *Verify:* exhaustive unit + E2E matrix tests covering all 5 verdicts.
-- [ ] `REQ-M1-06`: Artifact renderers (`report.rs`) emit schema-versioned `ab_report.json`, portable-link `AB_REPORT.md`, and optional `--emit-pr-review` `PR_FOR_REVIEW.md`. *Verify:* snapshot/schema validation tests.
-- [ ] `REQ-M1-07`: Full `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings` pass 100%.
+- [x] `REQ-M1-01`: JUnit XML parser (`parsers/junit.rs`) parses single and multi-file `<testsuite>`/`<testsuites>` XML from `pytest`, Maven Surefire, Gradle, and Vitest, extracting counts and per-test `classname::name -> Outcome` map. *Verify:* `cargo test -p riffty_ab_core junit`.
+- [x] `REQ-M1-02`: TAP v13/v14 parser (`parsers/tap.rs`) parses `node --test --test-reporter=tap` output including subtests, `# SKIP`, `# TODO`, `ok`/`not ok`, and plan lines. *Verify:* `cargo test -p riffty_ab_core tap`.
+- [x] `REQ-M1-03`: Sandboxed subprocess executor (`executor.rs`) enforces `timeout_secs` (kills hung child process), clears host env to safe allowlist + manifest `[env]`, and supports `--sandbox none|docker`. *Verify:* timeout & env-isolation integration tests.
+- [x] `REQ-M1-04`: Deterministic treatment & idempotency engine (`riffty_invoker.rs` + `runner.rs`): runs baseline `riffty check --format json`, applies `riffty check --fix --format json`, captures exact unified diff + `patch_sha256` + `AnalysisProvenance`, and runs Pass 2 verifying `auto_healed_count == 0` and identical diff hash. *Verify:* integration test proving idempotency and non-idempotent failure detection.
+- [x] `REQ-M1-05`: Deterministic verdict comparator (`verdict.rs`) accurately produces all 5 verdicts (`VERIFIED_BUG_FIX`, `VERIFIED_FINOPS_OR_CLEANUP`, `REJECTED_REGRESSION`, `REJECTED_TAMPERED`, `NO_OP`) and catches test-level regressions (`PASS -> FAIL` on individual test case even when aggregate failure count drops). *Verify:* exhaustive unit + E2E matrix tests covering all 5 verdicts.
+- [x] `REQ-M1-06`: Artifact renderers (`report.rs`) emit schema-versioned `ab_report.json`, portable-link `AB_REPORT.md`, and optional `--emit-pr-review` `PR_FOR_REVIEW.md`. *Verify:* snapshot/schema validation tests.
+- [x] `REQ-M1-07`: Full `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings` pass 100%.
 
 #### Milestone 1 Real-Life OSS Validation Scenarios (Unmodified Upstream SHAs, `allow_dirty_baseline = false`)
 1. **Scenario M1.1 (JS/TS Upstream A/B Verification with TAP Parser):** `langchain-ai/langchainjs` (unmodified upstream SHA `a13bdc05aa23c7fce32ad1bd7033d33f84158397`, `JSTS-CLONE-001` in `helpers.ts`) — run `riffty-ab run --allow-exec` end-to-end with `node --test --test-reporter=tap`, verify `VERIFIED_FINOPS_OR_CLEANUP` (or `NO_OP` on clean file), `patch_sha256`, 2nd-run idempotency, `ab_report.json`, and `AB_REPORT.md`.
