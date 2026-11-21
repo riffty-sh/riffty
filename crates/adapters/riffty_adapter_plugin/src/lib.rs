@@ -1004,5 +1004,115 @@ class TokenValidator {
         assert_eq!(dynamic_fix.applicability, Applicability::ManualOnly);
         assert!(dynamic_fix.edits.is_empty());
     }
+
+    #[test]
+    fn tier2_string_regex_hoists_replaceall_and_matches_and_skips_non_string() {
+        let Some(bundle) = discover_java_sidecar_bundle() else {
+            return;
+        };
+        let adapter = JavaPluginAdapter {
+            bundle,
+            extra_classpath: Vec::new(),
+            use_daemon: false,
+            daemon_socket: None,
+            architecture_forbid: Vec::new(),
+            allow_build_tool: false,
+        };
+
+        let src = r#"package com.acme.validation;
+
+class SizeValidator {
+    static class CustomMatcher {
+        boolean matches(String s) { return true; }
+    }
+
+    long parseSize(String text) {
+        return Math.round(Double.parseDouble(text.replaceAll("[GMK]B$", "")));
+    }
+
+    boolean isNumeric(String text) {
+        return text.matches("^[0-9]+$");
+    }
+
+    boolean customCheck(CustomMatcher matcher, String text) {
+        return matcher.matches(text);
+    }
+
+    String dynamicInLoop(String[] items, String userRegex) {
+        String last = "";
+        for (String s : items) {
+            last = s.replaceAll(userRegex, "");
+        }
+        return last;
+    }
+}
+"#;
+        let files = vec![WorkspaceFile {
+            file_id: FileId(1),
+            path: PathBuf::from("SizeValidator.java"),
+            relative_path: "SizeValidator.java".to_string(),
+            source: src.to_string(),
+        }];
+
+        let resp = adapter
+            .analyze_pass(&AnalyzePassRequest {
+                workspace_root: Path::new("."),
+                files: &files,
+                scoped_ranges: None,
+                rules_paths: &[],
+                allow_unsafe: false,
+                pass_index: 0,
+            })
+            .expect("Tier 2 javac sidecar should succeed");
+
+        let diags: Vec<&Diagnostic> = resp
+            .diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "JAVA-REGEX-002")
+            .collect();
+        assert_eq!(
+            diags.len(),
+            3,
+            "Expected 3 JAVA-REGEX-002 diagnostics (replaceAll, matches, dynamic-in-loop; excluding CustomMatcher.matches), got: {diags:?}"
+        );
+
+        let replace_all = diags
+            .iter()
+            .find(|d| {
+                src[d.range.start.0 as usize..d.range.end.0 as usize].contains("[GMK]B$")
+            })
+            .expect("Expected JAVA-REGEX-002 for String.replaceAll");
+        let fix = replace_all.fix.as_ref().expect("fix expected");
+        assert_eq!(fix.applicability, Applicability::Safe);
+        let mut patched = src.to_string();
+        let mut edits = fix.edits.clone();
+        edits.sort_by_key(|e| std::cmp::Reverse(e.range.start));
+        for e in edits {
+            patched.replace_range(e.range.start.0 as usize..e.range.end.0 as usize, &e.replacement);
+        }
+        assert!(
+            patched.contains("import java.util.regex.Pattern;"),
+            "Expected Pattern import:\n{patched}"
+        );
+        assert!(
+            patched.contains("private static final Pattern RIFFTY_PATTERN_1 = Pattern.compile(\"[GMK]B$\");"),
+            "Expected hoisted Pattern field:\n{patched}"
+        );
+        assert!(
+            patched.contains("RIFFTY_PATTERN_1.matcher(text).replaceAll(\"\")"),
+            "Expected matcher replacement:\n{patched}"
+        );
+
+        let dynamic = diags
+            .iter()
+            .find(|d| {
+                src[d.range.start.0 as usize..d.range.end.0 as usize].contains("userRegex")
+            })
+            .expect("Expected JAVA-REGEX-002 ManualOnly for dynamic regex in loop");
+        assert_eq!(
+            dynamic.fix.as_ref().unwrap().applicability,
+            Applicability::ManualOnly
+        );
+    }
 }
 

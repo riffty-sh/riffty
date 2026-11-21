@@ -11,3 +11,8 @@
 **/.mypy_cache/
 plugins/riffty-java/build/
 
+
+# Generated jlink runtime and Leyden AOT cache
+plugins/riffty-java/dist/runtime/
+plugins/riffty-java/dist/*.aot
+plugins/riffty-java/dist/*.aot.sha256

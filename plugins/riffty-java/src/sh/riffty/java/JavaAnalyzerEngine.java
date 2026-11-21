@@ -44,6 +44,9 @@ public final class JavaAnalyzerEngine {
             "UNIX_LINES", "CASE_INSENSITIVE", "COMMENTS", "MULTILINE",
             "LITERAL", "DOTALL", "UNICODE_CASE", "CANON_EQ", "UNICODE_CHARACTER_CLASS");
 
+    private static final Set<String> STRING_REGEX_METHODS = Set.of(
+            "replaceAll", "replaceFirst", "matches");
+
     public record ArchForbidRule(String id, String from, List<String> targets, String message) {
     }
 
@@ -214,6 +217,7 @@ public final class JavaAnalyzerEngine {
         final Set<ClassTree> hoistedHttpFieldScheduled = Collections.newSetFromMap(new IdentityHashMap<>());
         final Map<ClassTree, Map<String, String>> hoistedPatternsByClass = new IdentityHashMap<>();
         final Map<ClassTree, Set<String>> usedFieldNamesByClass = new IdentityHashMap<>();
+        boolean patternImportScheduled = false;
 
         UnitAnalyzer(
                 FileInput fi,
@@ -330,6 +334,9 @@ public final class JavaAnalyzerEngine {
                                 || ms.getExpression().toString().equals("java.util.regex.Pattern"))
                         && ms.getIdentifier().toString().equals("compile")) {
                     checkRegexCompile(node, ms, start, end);
+                } else if (node.getMethodSelect() instanceof MemberSelectTree ms
+                        && STRING_REGEX_METHODS.contains(ms.getIdentifier().toString())) {
+                    checkStringRegexMethod(node, ms, start, end);
                 }
             }
             return super.visitMethodInvocation(node, unused);
@@ -436,6 +443,179 @@ public final class JavaAnalyzerEngine {
                     message,
                     proof,
                     fix));
+        }
+
+        private void checkStringRegexMethod(MethodInvocationTree node, MemberSelectTree ms, int start, int end) {
+            String methodName = ms.getIdentifier().toString();
+            List<? extends ExpressionTree> args = node.getArguments();
+            int expectedArgs = methodName.equals("matches") ? 1 : 2;
+            if (args.size() != expectedArgs)
+                return;
+
+            TreePath path = getCurrentPath();
+            ExpressionTree recvExpr = ms.getExpression();
+            TypeMirror recvType = trees.getTypeMirror(new TreePath(new TreePath(path, ms), recvExpr));
+            if (recvType == null || !"java.lang.String".equals(recvType.toString()))
+                return;
+
+            boolean inLoop = isInsideLoop(path);
+            MethodTree enclosingMethod = findEnclosingHotMethod(path);
+            if (!inLoop && enclosingMethod == null)
+                return;
+
+            if (isLineSuppressed(start, "JAVA-REGEX-002"))
+                return;
+
+            ExpressionTree regexArg = args.get(0);
+            boolean isConstant = isConstantStringLiteral(regexArg);
+            if (!isConstant && !inLoop)
+                return;
+
+            boolean validSyntax = true;
+            if (isConstant && regexArg instanceof LiteralTree lt && lt.getValue() instanceof String regexLiteral) {
+                try {
+                    java.util.regex.Pattern.compile(regexLiteral);
+                } catch (java.util.regex.PatternSyntaxException _) {
+                    validSyntax = false;
+                }
+            }
+
+            ClassTree enclosingClass = findEnclosingClass(path);
+            boolean canHoistToClass = enclosingClass != null
+                    && (enclosingClass.getKind() == Tree.Kind.CLASS || enclosingClass.getKind() == Tree.Kind.RECORD)
+                    && !enclosingClass.getSimpleName().isEmpty();
+
+            int recvStart = (int) positions.getStartPosition(cu, recvExpr);
+            int recvEnd = (int) positions.getEndPosition(cu, recvExpr);
+            int regexStart = (int) positions.getStartPosition(cu, regexArg);
+            int regexEnd = (int) positions.getEndPosition(cu, regexArg);
+            if (recvStart < 0 || recvEnd <= recvStart || regexStart < 0 || regexEnd <= regexStart)
+                return;
+
+            String recvSrc = fi.source().substring(recvStart, recvEnd);
+            String regexSrc = fi.source().substring(regexStart, regexEnd);
+            String replSrc = null;
+            if (expectedArgs == 2) {
+                ExpressionTree replArg = args.get(1);
+                int replStart = (int) positions.getStartPosition(cu, replArg);
+                int replEnd = (int) positions.getEndPosition(cu, replArg);
+                if (replStart < 0 || replEnd <= replStart)
+                    return;
+                replSrc = fi.source().substring(replStart, replEnd);
+            }
+
+            Map<String, Object> proof = new LinkedHashMap<>();
+            proof.put("tier", "tier2_semantic");
+            proof.put("receiver_type", recvType.toString());
+            proof.put("method", "java.lang.String." + methodName);
+            proof.put("inside_loop", inLoop);
+            proof.put("constant_pattern", isConstant);
+
+            Map<String, Object> fix;
+            if (isConstant && validSyntax && canHoistToClass) {
+                int insertPos = findClassBodyInsertOffset(enclosingClass);
+                if (insertPos >= 0) {
+                    String normalizedKey = "Pattern.compile(" + regexSrc.trim() + ")";
+                    Map<String, String> classHoisted = hoistedPatternsByClass.computeIfAbsent(
+                            enclosingClass, _ -> new LinkedHashMap<>());
+                    String existingField = classHoisted.get(normalizedKey);
+                    List<Map<String, Object>> edits = new ArrayList<>();
+                    String fieldName;
+                    if (existingField != null) {
+                        fieldName = existingField;
+                    } else {
+                        fieldName = allocatePatternFieldName(enclosingClass);
+                        classHoisted.put(normalizedKey, fieldName);
+                        boolean useSimplePattern = hasPatternImport() || (!hasPatternNameConflict() && findImportInsertOffset() >= 0);
+                        String patternType = useSimplePattern ? "Pattern" : "java.util.regex.Pattern";
+                        if (useSimplePattern && !hasPatternImport() && !patternImportScheduled) {
+                            int importPos = findImportInsertOffset();
+                            if (importPos >= 0) {
+                                patternImportScheduled = true;
+                                int ib = utf8.toByteOffset(importPos);
+                                edits.add(makeEdit(ib, ib, "import java.util.regex.Pattern;\n"));
+                            }
+                        }
+                        int b = utf8.toByteOffset(insertPos);
+                        edits.add(makeEdit(
+                                b, b,
+                                "\n  private static final " + patternType + " " + fieldName + " = " + patternType
+                                        + ".compile(" + regexSrc + ");\n"));
+                    }
+                    String replacement = methodName.equals("matches")
+                            ? fieldName + ".matcher(" + recvSrc + ").matches()"
+                            : fieldName + ".matcher(" + recvSrc + ")." + methodName + "(" + replSrc + ")";
+                    edits.add(makeEdit(utf8.toByteOffset(start), utf8.toByteOffset(end), replacement));
+                    fix = makeFix(
+                            "Hoist constant regex in `String." + methodName + "` to `private static final " + fieldName + "`",
+                            edits, "Safe");
+                } else {
+                    fix = makeFix("Hoist constant regex to `private static final Pattern`", List.of(), "ManualOnly");
+                }
+            } else {
+                fix = makeFix("Cache compiled `Pattern` instead of calling `String." + methodName + "` repeatedly",
+                        List.of(), "ManualOnly");
+            }
+
+            String message = isConstant
+                    ? "`String." + methodName + "(...)` compiles regex " + regexSrc
+                            + " on every call (per Oracle `String#" + methodName
+                            + "` Javadoc); hoist to `private static final Pattern`."
+                    : "Dynamic regex in `String." + methodName
+                            + "(...)` inside loop compiles on every iteration; cache compiled `Pattern` if inputs repeat.";
+
+            diagnostics.add(makeDiag(
+                    "JAVA-REGEX-002", "string-regex-in-hot-path", "Warning",
+                    utf8.toByteOffset(start), utf8.toByteOffset(end),
+                    message,
+                    proof,
+                    fix));
+        }
+
+        private boolean hasPatternImport() {
+            for (ImportTree imp : cu.getImports()) {
+                if (imp.isStatic())
+                    continue;
+                String qn = imp.getQualifiedIdentifier().toString();
+                if (qn.equals("java.util.regex.Pattern") || qn.equals("java.util.regex.*"))
+                    return true;
+            }
+            return false;
+        }
+
+        private boolean hasPatternNameConflict() {
+            for (ImportTree imp : cu.getImports()) {
+                if (imp.isStatic())
+                    continue;
+                String qn = imp.getQualifiedIdentifier().toString();
+                if (qn.endsWith(".Pattern") && !qn.equals("java.util.regex.Pattern"))
+                    return true;
+            }
+            for (Tree decl : cu.getTypeDecls()) {
+                if (decl instanceof ClassTree ct && ct.getSimpleName().contentEquals("Pattern"))
+                    return true;
+            }
+            return false;
+        }
+
+        private int findImportInsertOffset() {
+            List<? extends ImportTree> imports = cu.getImports();
+            String src = fi.source();
+            if (!imports.isEmpty()) {
+                int lastEnd = (int) positions.getEndPosition(cu, imports.get(imports.size() - 1));
+                if (lastEnd >= 0) {
+                    int nl = src.indexOf('\n', lastEnd);
+                    return nl >= 0 ? nl + 1 : lastEnd;
+                }
+            }
+            if (cu.getPackage() != null) {
+                int pkgEnd = (int) positions.getEndPosition(cu, cu.getPackage());
+                if (pkgEnd >= 0) {
+                    int nl = src.indexOf('\n', pkgEnd);
+                    return nl >= 0 ? nl + 1 : pkgEnd;
+                }
+            }
+            return -1;
         }
 
         private String allocatePatternFieldName(ClassTree cls) {

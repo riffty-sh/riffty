@@ -7,7 +7,10 @@ pub struct SampleStats {
     pub median: f64,
     pub mean: f64,
     pub p95: f64,
+    pub p99: f64,
+    pub max: f64,
     pub stddev: f64,
+    pub ci95_half_width: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -28,6 +31,22 @@ pub struct PerfComparison {
     pub improved: bool,
 }
 
+fn student_t_95(n: usize) -> f64 {
+    match n {
+        0 | 1 => 0.0,
+        2 => 12.706,
+        3 => 4.303,
+        4 => 3.182,
+        5 => 2.776,
+        6 => 2.571,
+        7 => 2.447,
+        8 => 2.365,
+        9 => 2.306,
+        10 => 2.262,
+        _ => 1.96,
+    }
+}
+
 pub fn compute_stats(samples: &[f64]) -> Result<SampleStats, String> {
     if samples.is_empty() {
         return Err("cannot compute stats on empty sample set".to_string());
@@ -37,6 +56,7 @@ pub fn compute_stats(samples: &[f64]) -> Result<SampleStats, String> {
 
     let n = sorted.len();
     let min = sorted[0];
+    let max = sorted[n - 1];
     let median = if n.is_multiple_of(2) {
         (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
     } else {
@@ -44,18 +64,28 @@ pub fn compute_stats(samples: &[f64]) -> Result<SampleStats, String> {
     };
 
     let mean = sorted.iter().sum::<f64>() / (n as f64);
-    let variance = sorted
+    let sum_sq_diff: f64 = sorted
         .iter()
         .map(|x| {
             let d = x - mean;
             d * d
         })
-        .sum::<f64>()
-        / (n as f64);
+        .sum();
+    let variance = sum_sq_diff / (n as f64);
     let stddev = variance.sqrt();
+
+    let ci95_half_width = if n > 1 {
+        let sample_stddev = (sum_sq_diff / ((n - 1) as f64)).sqrt();
+        student_t_95(n) * sample_stddev / (n as f64).sqrt()
+    } else {
+        0.0
+    };
 
     let p95_idx = ((n as f64) * 0.95).ceil() as usize;
     let p95 = sorted[p95_idx.saturating_sub(1).min(n - 1)];
+
+    let p99_idx = ((n as f64) * 0.99).ceil() as usize;
+    let p99 = sorted[p99_idx.saturating_sub(1).min(n - 1)];
 
     Ok(SampleStats {
         n,
@@ -63,7 +93,10 @@ pub fn compute_stats(samples: &[f64]) -> Result<SampleStats, String> {
         median,
         mean,
         p95,
+        p99,
+        max,
         stddev,
+        ci95_half_width,
     })
 }
 
@@ -262,5 +295,37 @@ mod tests {
 
         let v3 = extract_metric_value("plain output", 123, None, None).unwrap();
         assert_eq!(v3, 123.0);
+    }
+
+    #[test]
+    fn computes_p99_max_and_ci95_half_width() {
+        // n = 5 samples: [10, 12, 14, 16, 18]
+        // mean = 14.0, sum_sq_diff = 40.0, sample_stddev = sqrt(40 / 4) = sqrt(10)
+        // t_{0.975, 4} = 2.776 => ci95 = 2.776 * sqrt(10) / sqrt(5) = 2.776 * sqrt(2)
+        let samples = vec![18.0, 10.0, 14.0, 12.0, 16.0];
+        let stats = compute_stats(&samples).unwrap();
+        assert_eq!(stats.n, 5);
+        assert_eq!(stats.min, 10.0);
+        assert_eq!(stats.max, 18.0);
+        assert_eq!(stats.p99, 18.0);
+        let expected_ci95 = 2.776 * (10.0_f64).sqrt() / (5.0_f64).sqrt();
+        assert!(
+            (stats.ci95_half_width - expected_ci95).abs() < 1e-9,
+            "expected ci95 {expected_ci95}, got {}",
+            stats.ci95_half_width
+        );
+
+        // n = 1 => ci95_half_width == 0.0
+        let single = compute_stats(&[42.0]).unwrap();
+        assert_eq!(single.max, 42.0);
+        assert_eq!(single.p99, 42.0);
+        assert_eq!(single.ci95_half_width, 0.0);
+
+        // n = 100 => p99 is 99th value, max is 100th value, t = 1.96
+        let hundred: Vec<f64> = (1..=100).map(|x| x as f64).collect();
+        let stats100 = compute_stats(&hundred).unwrap();
+        assert_eq!(stats100.p99, 99.0);
+        assert_eq!(stats100.max, 100.0);
+        assert!(stats100.ci95_half_width > 5.0 && stats100.ci95_half_width < 6.0);
     }
 }

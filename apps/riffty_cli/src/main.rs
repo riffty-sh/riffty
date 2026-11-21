@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 mod commands;
 mod config;
+mod infra_cmd;
 mod sarif;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -48,6 +49,10 @@ enum Commands {
     Doctor(DoctorArgs),
     /// Run the MCP stdio reviewer server exposing `riffty_review_changes`
     Mcp(McpArgs),
+    /// Analyze before/after workload efficiency, SLO compliance, and estimated cloud cost savings
+    Efficiency(infra_cmd::EfficiencyArgs),
+    /// Inspect registered infrastructure intelligence provider plugins and runtime health
+    Infra(infra_cmd::InfraArgs),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -262,6 +267,20 @@ async fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
         }
+        Commands::Efficiency(args) => match infra_cmd::run_efficiency(args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("riffty efficiency error: {err}");
+                ExitCode::from(2)
+            }
+        },
+        Commands::Infra(args) => match infra_cmd::run_infra(args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("riffty infra error: {err}");
+                ExitCode::from(2)
+            }
+        },
     }
 }
 

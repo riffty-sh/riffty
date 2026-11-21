@@ -7,6 +7,7 @@ use riffty_ab_core::{
 };
 use serde::Serialize;
 
+mod compare_metrics;
 mod executor;
 mod git_ops;
 mod riffty_invoker;
@@ -38,6 +39,8 @@ enum Commands {
     Init(InitArgs),
     /// Cryptographically attest a git checkout against an `ab-case.toml` manifest (read-only)
     Attest(AttestArgs),
+    /// Compare multi-metric A/B samples and emit attested JSON & Markdown reports
+    CompareMetrics(compare_metrics::CompareMetricsArgs),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -171,6 +174,13 @@ fn main() -> ExitCode {
         Commands::VerifyReport(args) => run_verify_report(args),
         Commands::Attest(args) => run_attest(args),
         Commands::Run(args) => run_ab_command(args),
+        Commands::CompareMetrics(args) => match compare_metrics::run_compare_metrics(args) {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("riffty-ab compare-metrics error: {e}");
+                ExitCode::from(2)
+            }
+        },
     }
 }
 

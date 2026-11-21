@@ -1698,6 +1698,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "riffty_ab"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "riffty_ab_core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "riffty_ab_core"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml",
+]
+
+[[package]]
 name = "riffty_adapter_ast_grep"
 version = "0.2.0"
 dependencies = [
@@ -1712,6 +1732,15 @@ version = "0.2.0"
 dependencies = [
  "ignore",
  "riffty_core",
+ "serde_json",
+]
+
+[[package]]
+name = "riffty_adapter_infra"
+version = "0.2.0"
+dependencies = [
+ "riffty_infra_core",
+ "serde",
  "serde_json",
 ]
 
@@ -1826,6 +1855,7 @@ dependencies = [
  "clap",
  "riffty_adapter_ast_grep",
  "riffty_adapter_fs",
+ "riffty_adapter_infra",
  "riffty_adapter_java_fast",
  "riffty_adapter_jsts_fast",
  "riffty_adapter_plugin",
@@ -1834,6 +1864,7 @@ dependencies = [
  "riffty_adapter_tsrs",
  "riffty_adapter_ty",
  "riffty_core",
+ "riffty_infra_core",
  "riffty_mcp",
  "riffty_pipeline",
  "riffty_rules_builtin",
@@ -1860,6 +1891,14 @@ dependencies = [
 
 [[package]]
 name = "riffty_core"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "riffty_infra_core"
 version = "0.2.0"
 dependencies = [
  "serde",
