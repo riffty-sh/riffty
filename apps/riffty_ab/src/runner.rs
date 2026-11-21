@@ -3,9 +3,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use riffty_ab_core::parsers::{junit::build_junit_summary, tap::build_tap_summary};
 use riffty_ab_core::{
-    AbManifest, AbReport, TestParserKind, TestRunSummary, TreatmentSummary, Verdict,
-    classify_vendored_or_generated, compute_sha256_hex, evaluate_verdict, render_ab_report_md,
-    render_pr_for_review_md,
+    AbManifest, AbReport, PerfComparison, TestParserKind, TestRunSummary, TreatmentSummary,
+    Verdict, classify_vendored_or_generated, compute_perf_comparison, compute_sha256_hex,
+    evaluate_verdict, extract_metric_value, render_ab_report_md, render_pr_for_review_md,
 };
 
 use crate::executor::{SandboxMode, run_sandboxed_command};
@@ -93,6 +93,7 @@ fn execute_in_repo(
             None,
             None,
             cmp,
+            None,
             vec![],
             verdict,
             reason,
@@ -204,6 +205,7 @@ fn execute_in_repo(
             Some(variant_a),
             None,
             cmp,
+            None,
             vendored_warnings,
             verdict,
             reason,
@@ -222,6 +224,22 @@ fn execute_in_repo(
         Some(&variant_b),
     );
 
+    // 8. Optional Interleaved A/B/A/B Performance & FinOps Benchmark using sibling git worktrees
+    let perf = if manifest.perf.enabled
+        && matches!(
+            verdict,
+            Verdict::VerifiedBugFix | Verdict::VerifiedFinopsOrCleanup | Verdict::VerifiedProbe
+        ) {
+        Some(run_interleaved_perf(
+            repo_dir,
+            manifest,
+            &treatment,
+            &opts.sandbox,
+        )?)
+    } else {
+        None
+    };
+
     Ok(AbReport::new(
         manifest.case_id.clone(),
         manifest.case_kind,
@@ -231,10 +249,134 @@ fn execute_in_repo(
         Some(variant_a),
         Some(variant_b),
         comparison,
+        perf,
         vendored_warnings,
         verdict,
         verdict_reason,
     ))
+}
+
+fn run_interleaved_perf(
+    repo_dir: &Path,
+    manifest: &AbManifest,
+    treatment: &TreatmentSummary,
+    sandbox: &SandboxMode,
+) -> Result<PerfComparison, String> {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let wt_base = std::env::temp_dir().join(format!(
+        "riffty_ab_perf_{}_{}_{}",
+        manifest.case_id,
+        std::process::id(),
+        nanos
+    ));
+    let wt_a = wt_base.join("worktree_a");
+    let wt_b = wt_base.join("worktree_b");
+    std::fs::create_dir_all(&wt_base)
+        .map_err(|e| format!("failed to create perf worktree base: {e}"))?;
+
+    let outcome = (|| -> Result<PerfComparison, String> {
+        git_ops::create_detached_worktree(repo_dir, &manifest.repo.commit_sha, &wt_a)?;
+        git_ops::create_detached_worktree(repo_dir, &manifest.repo.commit_sha, &wt_b)?;
+
+        // Apply the exact attested patch into worktree_b and verify SHA-256
+        git_ops::apply_patch_str(&wt_b, &treatment.unified_diff)?;
+        let wt_b_diff = git_ops::git_diff_unified(&wt_b)?;
+        let wt_b_sha = compute_sha256_hex(wt_b_diff.as_bytes());
+        if wt_b_sha != treatment.patch_sha256 {
+            return Err(format!(
+                "perf worktree_b patch_sha256 mismatch: expected {}, got {}",
+                treatment.patch_sha256, wt_b_sha
+            ));
+        }
+
+        // Run optional setup_cmd in both worktrees before timing
+        if let Some(ref setup_cmd) = manifest.test.setup_cmd
+            && !setup_cmd.trim().is_empty()
+        {
+            for wt in [&wt_a, &wt_b] {
+                let res = run_sandboxed_command(
+                    wt,
+                    setup_cmd,
+                    manifest.test.timeout_secs,
+                    &manifest.test.env,
+                    sandbox,
+                )?;
+                if res.timed_out || res.exit_code != Some(0) {
+                    return Err(format!(
+                        "perf worktree setup_cmd failed in {}: {}",
+                        wt.display(),
+                        res.stderr.trim()
+                    ));
+                }
+            }
+        }
+
+        let run_one = |wt: &Path| -> Result<f64, String> {
+            let res = run_sandboxed_command(
+                wt,
+                &manifest.perf.command,
+                manifest.perf.timeout_secs,
+                &manifest.test.env,
+                sandbox,
+            )?;
+            if res.timed_out || res.exit_code != Some(0) {
+                return Err(format!(
+                    "perf.command failed (exit={:?}, timed_out={}): {}",
+                    res.exit_code,
+                    res.timed_out,
+                    res.stderr.trim()
+                ));
+            }
+            extract_metric_value(
+                &res.stdout,
+                res.duration_ms,
+                manifest.perf.metric_regex.as_deref(),
+                manifest.perf.metric_json_key.as_deref(),
+            )
+        };
+
+        // Warmup pairs (discarded)
+        for _ in 0..manifest.perf.warmup_runs {
+            let _ = run_one(&wt_a)?;
+            let _ = run_one(&wt_b)?;
+        }
+
+        // Interleaved measured pairs with alternating A->B / B->A order to eliminate order bias
+        let mut samples_a = Vec::with_capacity(manifest.perf.measured_pairs);
+        let mut samples_b = Vec::with_capacity(manifest.perf.measured_pairs);
+        for pair_idx in 0..manifest.perf.measured_pairs {
+            if pair_idx % 2 == 0 {
+                samples_a.push(run_one(&wt_a)?);
+                samples_b.push(run_one(&wt_b)?);
+            } else {
+                samples_b.push(run_one(&wt_b)?);
+                samples_a.push(run_one(&wt_a)?);
+            }
+        }
+
+        let metric_name = manifest
+            .perf
+            .metric_name
+            .clone()
+            .unwrap_or_else(|| "duration_ms".to_string());
+
+        compute_perf_comparison(
+            metric_name,
+            manifest.perf.higher_is_better,
+            manifest.perf.warmup_runs,
+            samples_a,
+            samples_b,
+        )
+    })();
+
+    git_ops::remove_worktree(repo_dir, &wt_a);
+    git_ops::remove_worktree(repo_dir, &wt_b);
+    let _ = std::fs::remove_dir_all(&wt_base);
+
+    outcome
 }
 
 fn run_test_suite(
@@ -242,7 +384,6 @@ fn run_test_suite(
     manifest: &AbManifest,
     sandbox: &SandboxMode,
 ) -> Result<TestRunSummary, String> {
-    // Remove stale JUnit report files before running so Variant B can never read Variant A's XML
     if manifest.test.parser == TestParserKind::JunitXml
         && let Some(ref rel_pattern) = manifest.test.report_path
     {
@@ -282,7 +423,6 @@ fn run_test_suite(
                 .ok_or_else(|| "test.report_path is required for junit_xml parser".to_string())?;
             let files = resolve_junit_files(repo_dir, rel_pattern);
             if files.is_empty() {
-                // If test command crashed before emitting XML, fall back to failed summary
                 return Ok(TestRunSummary {
                     parser: TestParserKind::JunitXml,
                     exit_code: exec.exit_code,
@@ -316,7 +456,6 @@ fn run_test_suite(
     }
 }
 
-/// Resolves either a single file path or a simple directory wildcard (e.g., `target/surefire-reports/TEST-*.xml`).
 fn resolve_junit_files(repo_dir: &Path, rel_pattern: &str) -> Vec<PathBuf> {
     if !rel_pattern.contains('*') {
         let p = repo_dir.join(rel_pattern);

@@ -2,13 +2,16 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use riffty_ab_core::{AbManifest, Verdict, classify_vendored_or_generated};
+use riffty_ab_core::{
+    AbManifest, AbReport, Verdict, classify_vendored_or_generated, verify_report_integrity,
+};
 use serde::Serialize;
 
 mod executor;
 mod git_ops;
 mod riffty_invoker;
 mod runner;
+mod scan_cmd;
 
 use executor::SandboxMode;
 
@@ -27,6 +30,10 @@ struct Cli {
 enum Commands {
     /// Run a declarative A/B verification manifest (`ab-case.toml`)
     Run(RunArgs),
+    /// Read-only discovery scanner: find genuine upstream `riffty` issues and emit `ab-case.toml`
+    Scan(scan_cmd::ScanArgs),
+    /// Cryptographically and logically verify an `ab_report.json` against tampering or forged verdicts
+    VerifyReport(VerifyReportArgs),
     /// Generate a starter `ab-case.toml` manifest
     Init(InitArgs),
     /// Cryptographically attest a git checkout against an `ab-case.toml` manifest (read-only)
@@ -79,6 +86,12 @@ struct RunArgs {
     /// Output format (`text` or `json`)
     #[arg(long, default_value = "text")]
     format: String,
+}
+
+#[derive(Debug, clap::Args)]
+struct VerifyReportArgs {
+    /// Path to `ab_report.json`
+    report: PathBuf,
 }
 
 #[derive(Debug, clap::Args)]
@@ -148,8 +161,53 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        Commands::Scan(args) => match scan_cmd::run_scan(args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("riffty-ab scan error: {e}");
+                ExitCode::from(2)
+            }
+        },
+        Commands::VerifyReport(args) => run_verify_report(args),
         Commands::Attest(args) => run_attest(args),
         Commands::Run(args) => run_ab_command(args),
+    }
+}
+
+fn run_verify_report(args: VerifyReportArgs) -> ExitCode {
+    let raw = match std::fs::read_to_string(&args.report) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("riffty-ab verify-report error: failed to read {}: {e}", args.report.display());
+            return ExitCode::from(2);
+        }
+    };
+    let report: AbReport = match serde_json::from_str(&raw) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("riffty-ab verify-report error: invalid JSON in {}: {e}", args.report.display());
+            return ExitCode::from(2);
+        }
+    };
+
+    match verify_report_integrity(&report) {
+        Ok(()) => {
+            println!(
+                "VERIFIED: {} | verdict={} | commit={} | tree={}",
+                report.case_id,
+                report.verdict,
+                report.attestation.actual_head_sha,
+                report.attestation.actual_tree_sha
+            );
+            ExitCode::SUCCESS
+        }
+        Err(errs) => {
+            eprintln!("INTEGRITY CHECK FAILED for {}:", args.report.display());
+            for err in errs {
+                eprintln!("  - {err}");
+            }
+            ExitCode::from(3)
+        }
     }
 }
 
@@ -330,6 +388,17 @@ fn run_ab_command(args: RunArgs) -> ExitCode {
                     println!(
                         "PATCH:   sha256={} healed={} idempotent={}",
                         treat.patch_sha256, treat.auto_healed_count, treat.idempotent
+                    );
+                }
+                if let Some(ref perf) = report.perf {
+                    println!(
+                        "PERF:    {} median {:.3} -> {:.3} ({:+.2}%, wins={}/{})",
+                        perf.metric_name,
+                        perf.stats_a.median,
+                        perf.stats_b.median,
+                        perf.delta_pct,
+                        perf.paired_wins,
+                        perf.measured_pairs
                     );
                 }
             }

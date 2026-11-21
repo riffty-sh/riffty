@@ -1,6 +1,6 @@
 # RFC: `riffty-ab` — Deterministic A/B Empirical Verification Runner & Discovery CLI
 
-- **Status:** In Progress — Milestones 0–1 Complete (13/13 Requirements, 4/4 OSS Scenarios PASS)
+- **Status:** In Progress — Milestones 0–2 Complete (18/18 Requirements, 6/6 OSS Scenarios PASS)
 - **Target Repo:** `riffty` (`riffty-sh/riffty` — `crates/riffty_ab_core`, `apps/riffty_ab`)
 - **Validation Repo:** `riffty-assets` (`benchmarks/ab_runner_milestones/`)
 - **Precedents:** [`RFC_JAVA_PLUGIN_ARCHITECTURE.md`](./RFC_JAVA_PLUGIN_ARCHITECTURE.md), [`RFC_JSTS_PLUGIN_ARCHITECTURE.md`](./RFC_JSTS_PLUGIN_ARCHITECTURE.md)
@@ -273,11 +273,11 @@ timeout_secs = 120
 **Goal:** Add statistically sound interleaved A/B/A/B benchmarking using sibling git worktrees, read-only upstream discovery (`riffty-ab scan`) with automatic `ab-case.toml` generation, and offline report verification (`riffty-ab verify-report`).
 
 #### Milestone 2 Requirements & Verification Checklist
-- [ ] `REQ-M2-01`: Sibling git worktree manager creates `worktree_a` (pristine `HEAD^{tree}`) and `worktree_b` (attested `patch_sha256` applied), runs warmup pairs, and executes alternating interleaved `(A, B)` / `(B, A)` pairs. *Verify:* integration test verifying worktree isolation, alternating order, and automatic cleanup.
-- [ ] `REQ-M2-02`: Statistics engine (`stats.rs`) computes `min`, `median`, `mean`, `p95`, `stddev`, `delta_pct`, and `paired_wins` across wall-clock `duration_ms` and optional regex/JSON stdout metric extractors (supporting both `higher_is_better = false` and `true`). *Verify:* deterministic unit tests with known distributions.
-- [ ] `REQ-M2-03`: Read-only discovery scanner (`riffty-ab scan`) scans a target repo's `HEAD` (or `--commits N` history) using `riffty check --format json` with **zero target code execution**, filters vendored/generated files by default, ranks safe-fixable findings, and emits a valid `ab-case.toml` (`--emit-manifest`) with auto-detected test runner. *Verify:* CLI integration tests on multi-language fixture repos.
-- [ ] `REQ-M2-04`: `riffty-ab verify-report <ab_report.json>` re-verifies internal consistency (`patch_sha256` matches embedded/linked diff, verdict matches variant A/B data, `allow_dirty_baseline` policy respected) and exits non-zero if a report was hand-edited/forged. *Verify:* positive + forged-report negative tests.
-- [ ] `REQ-M2-05`: Full `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings` pass 100%.
+- [x] `REQ-M2-01`: Sibling git worktree manager creates `worktree_a` (pristine `HEAD^{tree}`) and `worktree_b` (attested `patch_sha256` applied), runs warmup pairs, and executes alternating interleaved `(A, B)` / `(B, A)` pairs. *Verify:* integration test verifying worktree isolation, alternating order, and automatic cleanup.
+- [x] `REQ-M2-02`: Statistics engine (`stats.rs`) computes `min`, `median`, `mean`, `p95`, `stddev`, `delta_pct`, and `paired_wins` across wall-clock `duration_ms` and optional regex/JSON stdout metric extractors (supporting both `higher_is_better = false` and `true`). *Verify:* deterministic unit tests with known distributions.
+- [x] `REQ-M2-03`: Read-only discovery scanner (`riffty-ab scan`) scans a target repo's `HEAD` (or `--commits N` history) using `riffty check --format json` with **zero target code execution**, filters vendored/generated files by default, ranks safe-fixable findings, and emits a valid `ab-case.toml` (`--emit-manifest`) with auto-detected test runner. *Verify:* CLI integration tests on multi-language fixture repos.
+- [x] `REQ-M2-04`: `riffty-ab verify-report <ab_report.json>` re-verifies internal consistency (`patch_sha256` matches embedded/linked diff, verdict matches variant A/B data, `allow_dirty_baseline` policy respected) and exits non-zero if a report was hand-edited/forged. *Verify:* positive + forged-report negative tests.
+- [x] `REQ-M2-05`: Full `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings` pass 100%.
 
 #### Milestone 2 Real-Life OSS Validation Scenarios (Unmodified Upstream SHAs, `allow_dirty_baseline = false`)
 1. **Scenario M2.1 (Read-Only Discovery + Auto-Manifest on Python OSS Repo):** Run `riffty-ab scan` on a real unmodified Python OSS repo -> auto-generate `ab-case.toml` -> run `riffty-ab run --allow-exec` -> verify `riffty-ab verify-report` passes.

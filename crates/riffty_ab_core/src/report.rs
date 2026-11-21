@@ -2,11 +2,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::manifest::CURRENT_SCHEMA_VERSION;
 use crate::parsers::TestRunSummary;
+use crate::stats::PerfComparison;
 use crate::vendored::VendoredMatch;
-use crate::verdict::{BaselineAttestation, TestComparison, TreatmentSummary, Verdict};
+use crate::verdict::{
+    BaselineAttestation, TestComparison, TreatmentSummary, Verdict, compute_sha256_hex,
+    evaluate_verdict,
+};
 use crate::CaseKind;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AbReport {
     pub schema_version: u32,
     pub case_id: String,
@@ -17,6 +21,8 @@ pub struct AbReport {
     pub variant_a: Option<TestRunSummary>,
     pub variant_b: Option<TestRunSummary>,
     pub comparison: Option<TestComparison>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub perf: Option<PerfComparison>,
     pub vendored_warnings: Vec<VendoredMatch>,
     pub verdict: Verdict,
     pub verdict_reason: String,
@@ -33,6 +39,7 @@ impl AbReport {
         variant_a: Option<TestRunSummary>,
         variant_b: Option<TestRunSummary>,
         comparison: Option<TestComparison>,
+        perf: Option<PerfComparison>,
         vendored_warnings: Vec<VendoredMatch>,
         verdict: Verdict,
         verdict_reason: String,
@@ -47,6 +54,7 @@ impl AbReport {
             variant_a,
             variant_b,
             comparison,
+            perf,
             vendored_warnings,
             verdict,
             verdict_reason,
@@ -56,6 +64,73 @@ impl AbReport {
     pub fn to_json_pretty(&self) -> Result<String, String> {
         serde_json::to_string_pretty(self)
             .map_err(|e| format!("failed to serialize ab_report.json: {e}"))
+    }
+}
+
+/// Offline cryptographic & logical integrity verifier for `ab_report.json`.
+/// Rejects hand-edited verdicts, forged diffs, or policy violations.
+pub fn verify_report_integrity(report: &AbReport) -> Result<(), Vec<String>> {
+    let mut errors = Vec::new();
+
+    if report.schema_version != CURRENT_SCHEMA_VERSION {
+        errors.push(format!(
+            "unsupported schema_version {} (expected {})",
+            report.schema_version, CURRENT_SCHEMA_VERSION
+        ));
+    }
+
+    if report.attestation.allow_dirty_baseline
+        && matches!(
+            report.case_kind,
+            CaseKind::UpstreamBugVerification | CaseKind::FinopsOrCleanup
+        )
+    {
+        errors.push(format!(
+            "policy violation: allow_dirty_baseline=true is forbidden for case_kind={}",
+            report.case_kind
+        ));
+    }
+
+    if let Some(ref treat) = report.treatment {
+        let actual_sha = compute_sha256_hex(treat.unified_diff.as_bytes());
+        if actual_sha != treat.patch_sha256 {
+            errors.push(format!(
+                "patch_sha256 mismatch: report claims {}, actual SHA-256(unified_diff) is {}",
+                treat.patch_sha256, actual_sha
+            ));
+        }
+    }
+
+    let (expected_verdict, _, _) = evaluate_verdict(
+        report.case_kind,
+        &report.attestation,
+        report.treatment.as_ref(),
+        report.variant_a.as_ref(),
+        report.variant_b.as_ref(),
+    );
+    if expected_verdict != report.verdict {
+        errors.push(format!(
+            "verdict tampering detected: report claims {}, deterministic recomputation yields {}",
+            report.verdict, expected_verdict
+        ));
+    }
+
+    if let Some(ref perf) = report.perf
+        && (perf.samples_a.len() != perf.measured_pairs
+            || perf.samples_b.len() != perf.measured_pairs)
+    {
+        errors.push(format!(
+            "perf sample length mismatch: measured_pairs={}, samples_a={}, samples_b={}",
+            perf.measured_pairs,
+            perf.samples_a.len(),
+            perf.samples_b.len()
+        ));
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
     }
 }
 
@@ -120,6 +195,40 @@ pub fn render_ab_report_md(report: &AbReport) -> String {
         ));
     }
 
+    if let Some(ref perf) = report.perf {
+        md.push_str("\n## Interleaved A/B/A/B Performance & FinOps Benchmark\n\n");
+        md.push_str(&format!(
+            "- **Metric:** `{}` (higher_is_better=`{}`, warmup_pairs={}, measured_pairs={})\n",
+            perf.metric_name, perf.higher_is_better, perf.warmup_runs, perf.measured_pairs
+        ));
+        md.push_str(&format!(
+            "- **Median Delta (B vs A):** `{:+.2}%` | **Paired Wins:** `{}/{}` | **Improved:** `{}`\n\n",
+            perf.delta_pct, perf.paired_wins, perf.measured_pairs, perf.improved
+        ));
+        md.push_str("| Statistic | Variant A (Control) | Variant B (Treatment) |\n");
+        md.push_str("| :--- | :---: | :---: |\n");
+        md.push_str(&format!(
+            "| Min | {:.3} | {:.3} |\n",
+            perf.stats_a.min, perf.stats_b.min
+        ));
+        md.push_str(&format!(
+            "| Median | {:.3} | {:.3} |\n",
+            perf.stats_a.median, perf.stats_b.median
+        ));
+        md.push_str(&format!(
+            "| Mean | {:.3} | {:.3} |\n",
+            perf.stats_a.mean, perf.stats_b.mean
+        ));
+        md.push_str(&format!(
+            "| p95 | {:.3} | {:.3} |\n",
+            perf.stats_a.p95, perf.stats_b.p95
+        ));
+        md.push_str(&format!(
+            "| Stddev | {:.3} | {:.3} |\n",
+            perf.stats_a.stddev, perf.stats_b.stddev
+        ));
+    }
+
     if let Some(ref cmp) = report.comparison {
         if !cmp.fixed_tests.is_empty() {
             md.push_str("\n### Fixed Tests (`FAIL -> PASS`)\n\n");
@@ -158,6 +267,7 @@ pub fn render_ab_report_md(report: &AbReport) -> String {
     md.push_str("\n## Replication\n\n");
     md.push_str("```bash\n");
     md.push_str("riffty-ab run ab-case.toml --allow-exec --out-dir logs\n");
+    md.push_str("riffty-ab verify-report logs/ab_report.json\n");
     md.push_str("```\n");
 
     md
@@ -175,13 +285,34 @@ pub fn render_pr_for_review_md(report: &AbReport) -> String {
     md.push_str(&format!("- **Empirical Verdict:** `{}`\n", report.verdict));
     md.push_str(&format!("- **Verification Note:** {}\n", report.verdict_reason));
 
+    if let Some(ref perf) = report.perf {
+        md.push_str(&format!(
+            "- **Interleaved Perf (`{}`):** median `{:.3}` -> `{:.3}` (`{:+.2}%`, paired wins `{}/{}`)\n",
+            perf.metric_name,
+            perf.stats_a.median,
+            perf.stats_b.median,
+            perf.delta_pct,
+            perf.paired_wins,
+            perf.measured_pairs
+        ));
+    }
+
     if let Some(ref treat) = report.treatment {
-        md.push_str(&format!("- **Files Modified ({}):** {}\n",
+        md.push_str(&format!(
+            "- **Files Modified ({}):** {}\n",
             treat.files_modified.len(),
-            treat.files_modified.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", ")
+            treat
+                .files_modified
+                .iter()
+                .map(|f| format!("`{f}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
         md.push_str(&format!("- **Patch SHA-256:** `{}`\n", treat.patch_sha256));
-        md.push_str(&format!("- **Idempotent (2nd pass 0 edits):** `{}`\n\n", treat.idempotent));
+        md.push_str(&format!(
+            "- **Idempotent (2nd pass 0 edits):** `{}`\n\n",
+            treat.idempotent
+        ));
         if !treat.unified_diff.trim().is_empty() {
             md.push_str("## Patch\n\n```diff\n");
             md.push_str(&treat.unified_diff);
@@ -201,10 +332,10 @@ pub fn render_pr_for_review_md(report: &AbReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::verdict::compute_sha256_hex;
+    use crate::TestParserKind;
+    use std::collections::BTreeMap;
 
-    #[test]
-    fn renders_json_markdown_and_pr_review_without_machine_local_links() {
+    fn sample_report() -> AbReport {
         let att = BaselineAttestation::evaluate(
             "a13bdc05aa23c7fce32ad1bd7033d33f84158397",
             "a13bdc05aa23c7fce32ad1bd7033d33f84158397",
@@ -226,20 +357,40 @@ mod tests {
             unified_diff: diff.to_string(),
             provenance: serde_json::json!([]),
         };
-        let report = AbReport::new(
+        let pass_run = TestRunSummary {
+            parser: TestParserKind::ExitCode,
+            exit_code: Some(0),
+            timed_out: false,
+            duration_ms: 50,
+            total: 1,
+            passed: 1,
+            failed: 0,
+            errors: 0,
+            skipped: 0,
+            cases: BTreeMap::new(),
+            stdout_excerpt: String::new(),
+            stderr_excerpt: String::new(),
+        };
+        AbReport::new(
             "demo-case".to_string(),
             CaseKind::FinopsOrCleanup,
             "https://github.com/org/repo".to_string(),
             att,
             Some(treat),
-            None,
+            Some(pass_run.clone()),
+            Some(pass_run),
             None,
             None,
             vec![],
             Verdict::VerifiedFinopsOrCleanup,
             "all tests passed".to_string(),
-        );
+        )
+    }
 
+    #[test]
+    fn renders_json_markdown_and_pr_review_without_machine_local_links() {
+        let report = sample_report();
+        assert!(verify_report_integrity(&report).is_ok());
         let json = report.to_json_pretty().unwrap();
         assert!(json.contains("\"VERIFIED_FINOPS_OR_CLEANUP\""));
         let md = render_ab_report_md(&report);
@@ -248,5 +399,18 @@ mod tests {
         let pr = render_pr_for_review_md(&report);
         assert!(pr.contains("Human-gated upstream PR draft"));
         assert!(!pr.contains("file:///"));
+    }
+
+    #[test]
+    fn verify_report_rejects_forged_verdict_and_patch_hash() {
+        let mut forged = sample_report();
+        forged.verdict = Verdict::VerifiedBugFix;
+        let errs = verify_report_integrity(&forged).unwrap_err();
+        assert!(errs.iter().any(|e| e.contains("verdict tampering")));
+
+        let mut forged_diff = sample_report();
+        forged_diff.treatment.as_mut().unwrap().unified_diff.push_str("+hack\n");
+        let errs2 = verify_report_integrity(&forged_diff).unwrap_err();
+        assert!(errs2.iter().any(|e| e.contains("patch_sha256 mismatch")));
     }
 }

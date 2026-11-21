@@ -142,6 +142,106 @@ pub fn git_modified_files(repo_dir: &Path) -> Result<Vec<String>, String> {
         .collect())
 }
 
+/// Creates a detached git worktree at `worktree_dir` pinned to `commit_sha`.
+pub fn create_detached_worktree(
+    repo_dir: &Path,
+    commit_sha: &str,
+    worktree_dir: &Path,
+) -> Result<(), String> {
+    run_git(
+        Some(repo_dir),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            worktree_dir.to_str().unwrap_or(""),
+            commit_sha,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Removes a detached git worktree cleanly (best-effort prune).
+pub fn remove_worktree(repo_dir: &Path, worktree_dir: &Path) {
+    let _ = run_git(
+        Some(repo_dir),
+        &[
+            "worktree",
+            "remove",
+            "--force",
+            worktree_dir.to_str().unwrap_or(""),
+        ],
+    );
+    let _ = std::fs::remove_dir_all(worktree_dir);
+    let _ = run_git(Some(repo_dir), &["worktree", "prune"]);
+}
+
+/// Applies a unified diff patch cleanly inside `worktree_dir` via `git apply`.
+pub fn apply_patch_str(worktree_dir: &Path, unified_diff: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(worktree_dir)
+        .args(["apply", "--whitespace=nowarn", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn git apply: {e}"))?;
+
+    if let Some(ref mut stdin) = child.stdin {
+        stdin
+            .write_all(unified_diff.as_bytes())
+            .map_err(|e| format!("failed to write patch to git apply stdin: {e}"))?;
+    }
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("failed waiting for git apply: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "git apply failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+/// Shallow-clones a repository's HEAD (with optional history depth for `riffty-ab scan --commits N`).
+pub fn clone_head_shallow(repo_url: &str, dest_dir: &Path, depth: usize) -> Result<(), String> {
+    let depth_str = depth.max(1).to_string();
+    run_git(
+        None,
+        &[
+            "clone",
+            "--depth",
+            &depth_str,
+            repo_url,
+            dest_dir.to_str().unwrap_or(""),
+        ],
+    )?;
+    Ok(())
+}
+
+/// Returns up to `limit` recent commit SHAs from `HEAD` (newest first).
+pub fn recent_commit_shas(repo_dir: &Path, limit: usize) -> Result<Vec<String>, String> {
+    let n_arg = format!("-{}", limit.max(1));
+    let out = run_git(Some(repo_dir), &["rev-list", &n_arg, "HEAD"])?;
+    Ok(out
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+pub fn rev_parse_head_and_tree(repo_dir: &Path) -> Result<(String, String), String> {
+    let head = run_git(Some(repo_dir), &["rev-parse", "HEAD"])?;
+    let tree = run_git(Some(repo_dir), &["rev-parse", "HEAD^{tree}"])?;
+    Ok((head, tree))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
