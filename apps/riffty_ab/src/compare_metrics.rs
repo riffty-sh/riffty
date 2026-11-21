@@ -208,6 +208,15 @@ pub fn render_multi_metric_md(report: &MultiMetricAbReport) -> String {
         ));
     }
 
+    if let Some(first) = report.metrics.first()
+        && first.comparison.measured_pairs <= 20
+    {
+        md.push_str(&format!(
+            "\n> **Statistical Note (`n = {}` repetitions):** Outer-repetition `p95`/`p99` use nearest-rank order statistics (`ceil(p * n)`), which collapse to `max` when `n <= 20`. Request-level `p95`/`p99` latencies are reported directly as their own per-repetition metric rows above. In JSON output, `stddev` is population standard deviation (`/ n`), while `95% CI` uses unbiased sample standard deviation (`/ (n - 1)`) with exact Student-t critical value (`df = n - 1`).\n",
+            first.comparison.measured_pairs
+        ));
+    }
+
     if !report.evidence_hashes.is_empty() {
         md.push_str("\n## Evidence File SHA-256 Attestation\n\n");
         md.push_str("| File | SHA-256 |\n");

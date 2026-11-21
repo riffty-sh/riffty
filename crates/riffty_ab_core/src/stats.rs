@@ -6,10 +6,14 @@ pub struct SampleStats {
     pub min: f64,
     pub median: f64,
     pub mean: f64,
+    /// Empirical 95th percentile (`ceil(0.95 * n)`-th order statistic; equals `max` when `n <= 20`).
     pub p95: f64,
+    /// Empirical 99th percentile (`ceil(0.99 * n)`-th order statistic; equals `max` when `n <= 100`).
     pub p99: f64,
     pub max: f64,
+    /// Population standard deviation (denominator `n`).
     pub stddev: f64,
+    /// Half-width of the 95% Student-t confidence interval using unbiased sample standard deviation (`n - 1`).
     pub ci95_half_width: f64,
 }
 

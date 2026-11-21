@@ -150,6 +150,8 @@ impl EfficiencyAnalyzer {
             estimated_monthly_savings,
             estimated_annual_savings,
             savings_pct,
+            idle_hourly_cost: None,
+            shared_hourly_cost: None,
             assumptions,
             limitations,
         }

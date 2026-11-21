@@ -297,6 +297,10 @@ pub struct EfficiencyReport {
     pub estimated_annual_savings: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub savings_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_hourly_cost: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_hourly_cost: Option<f64>,
     pub assumptions: Vec<String>,
     pub limitations: Vec<String>,
 }

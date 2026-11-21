@@ -4,9 +4,10 @@ use clap::{Args, Subcommand, ValueEnum};
 use riffty_adapter_infra::{
     KubernetesHpaAdapter, LocalBenchmarkMetricsAdapter, OpenCostCostAdapter,
     PrometheusMetricsAdapter, PublicPricingAdapter, default_infra_registry,
+    parse_opencost_detailed,
 };
 use riffty_infra_core::{
-    AutoscalingProviderPort, CORE_ONLY_CAPACITY_LIMITATION, CostProviderPort, EfficiencyAnalyzer,
+    AutoscalingProviderPort, CORE_ONLY_CAPACITY_LIMITATION, EfficiencyAnalyzer,
     EfficiencyComparison, EfficiencyReport, InfraModality, MeasurementWindow, MetricsProviderPort,
     ObservedMetrics, PodResourceSpec, PricingProviderPort, SloPolicy, WorkloadReference,
 };
@@ -55,6 +56,10 @@ pub struct EfficiencyAnalyzeArgs {
     /// Optional OpenCost base URL for live namespace cost attribution
     #[arg(long, env = "OPENCOST_URL")]
     pub opencost_url: Option<String>,
+
+    /// Optional recorded OpenCost /allocation/compute JSON snapshot for reproducible offline attribution
+    #[arg(long)]
+    pub opencost_snapshot: Option<PathBuf>,
 
     /// Kubernetes namespace for the baseline workload (used with --prometheus-url / --opencost-url)
     #[arg(long)]
@@ -161,10 +166,11 @@ fn run_efficiency_analyze(args: EfficiencyAnalyzeArgs) -> Result<(), String> {
         }
     };
 
-    let has_live_source = namespaces.is_some() && (prom_url.is_some() || opencost_url.is_some());
+    let has_live_source = namespaces.is_some()
+        && (prom_url.is_some() || opencost_url.is_some() || args.opencost_snapshot.is_some());
     if args.baseline.is_none() && !has_live_source {
         return Err(
-            "provide --baseline <path>, or --namespace-baseline + --namespace-optimized with --opencost-url and/or --prometheus-url"
+            "provide --baseline <path>, or --namespace-baseline + --namespace-optimized with --opencost-url, --opencost-snapshot, and/or --prometheus-url"
                 .to_string(),
         );
     }
@@ -254,7 +260,7 @@ fn run_efficiency_analyze(args: EfficiencyAnalyzeArgs) -> Result<(), String> {
         modality = InfraModality::Connected;
     }
 
-    let use_opencost = opencost_url.is_some() && namespaces.is_some();
+    let use_opencost = (opencost_url.is_some() || args.opencost_snapshot.is_some()) && namespaces.is_some();
     if !use_opencost {
         active_providers.push("public-pricing".to_string());
     }
@@ -300,10 +306,34 @@ fn run_efficiency_analyze(args: EfficiencyAnalyzeArgs) -> Result<(), String> {
 
     let mut report = EfficiencyAnalyzer::compare(&comparison);
 
-    if let (Some(url), Some((base_ns, opt_ns))) = (opencost_url, namespaces) {
-        let opencost_adapter = OpenCostCostAdapter::new(url);
-        let base_cost = opencost_adapter.attribute_cost(&base_workload, &window)?;
-        let opt_cost = opencost_adapter.attribute_cost(&opt_workload, &window)?;
+    if let Some((base_ns, opt_ns)) = namespaces
+        && (args.opencost_snapshot.is_some() || opencost_url.is_some())
+    {
+        let (base_detailed, opt_detailed, source_label) =
+            if let Some(snapshot_path) = &args.opencost_snapshot {
+                let raw = std::fs::read_to_string(snapshot_path).map_err(|e| {
+                    format!(
+                        "failed to read OpenCost snapshot '{}': {e}",
+                        snapshot_path.display()
+                    )
+                })?;
+                (
+                    parse_opencost_detailed(&raw, base_ns)?,
+                    parse_opencost_detailed(&raw, opt_ns)?,
+                    format!("Recorded OpenCost snapshot ({})", snapshot_path.display()),
+                )
+            } else {
+                let url = opencost_url.expect("checked above");
+                let opencost_adapter = OpenCostCostAdapter::new(url);
+                (
+                    opencost_adapter.attribute_detailed(&base_workload, &window)?,
+                    opencost_adapter.attribute_detailed(&opt_workload, &window)?,
+                    format!("Live OpenCost /allocation/compute ({}m window)", args.window_mins.max(5)),
+                )
+            };
+
+        let base_cost = base_detailed.allocated;
+        let opt_cost = opt_detailed.allocated;
 
         let monthly_savings = base_cost.monthly_cost - opt_cost.monthly_cost;
         let annual_savings = base_cost.annual_cost - opt_cost.annual_cost;
@@ -318,6 +348,8 @@ fn run_efficiency_analyze(args: EfficiencyAnalyzeArgs) -> Result<(), String> {
         report.estimated_monthly_savings = monthly_savings;
         report.estimated_annual_savings = annual_savings;
         report.savings_pct = savings_pct;
+        report.idle_hourly_cost = Some(base_detailed.idle_hourly_cost);
+        report.shared_hourly_cost = Some(base_detailed.shared_hourly_cost.max(opt_detailed.shared_hourly_cost));
         report.modality = InfraModality::Connected;
         if !report
             .active_providers
@@ -328,11 +360,15 @@ fn run_efficiency_analyze(args: EfficiencyAnalyzeArgs) -> Result<(), String> {
         }
         report.assumptions.clear();
         report.assumptions.push(format!(
-            "Live OpenCost /allocation/compute attribution for namespaces '{base_ns}' vs '{opt_ns}' over {}m window.",
-            args.window_mins.max(5)
+            "{source_label} attribution for namespaces '{base_ns}' vs '{opt_ns}' (aligned {:.1}m vs {:.1}m).",
+            base_detailed.minutes, opt_detailed.minutes
         ));
         report.assumptions.push(
             "Monthly = hourly × 730 hrs; annual = hourly × 8760 hrs (normalized from OpenCost window minutes)."
+                .to_string(),
+        );
+        report.assumptions.push(
+            "Allocated namespace costs are strictly separated from cluster __idle__ and shared overhead."
                 .to_string(),
         );
         report
@@ -494,6 +530,20 @@ fn render_efficiency_text(r: &EfficiencyReport) -> String {
         r.estimated_annual_savings,
         fmt_delta(r.savings_pct)
     ));
+    if let Some(idle_hr) = r.idle_hourly_cost {
+        out.push_str(&format!(
+            "  Cluster Idle (__idle__, excluded): ${:.4}/hr (${:.2}/mo)\n",
+            idle_hr,
+            idle_hr * 730.0
+        ));
+    }
+    if let Some(shared_hr) = r.shared_hourly_cost {
+        out.push_str(&format!(
+            "  Cluster Shared Overhead (excluded): ${:.4}/hr (${:.2}/mo)\n",
+            shared_hr,
+            shared_hr * 730.0
+        ));
+    }
 
     if !r.assumptions.is_empty() {
         out.push_str("\nAssumptions:\n");
@@ -579,6 +629,23 @@ fn render_efficiency_markdown(r: &EfficiencyReport) -> String {
         r.estimated_annual_savings,
         fmt_delta(r.savings_pct)
     ));
+    if r.idle_hourly_cost.is_some() || r.shared_hourly_cost.is_some() {
+        out.push_str("\n### Cluster Idle & Shared Overhead (Separated from Allocated Savings)\n\n");
+        if let Some(idle_hr) = r.idle_hourly_cost {
+            out.push_str(&format!(
+                "- **Cluster `__idle__`:** `${:.4}/hr` (`${:.2}/mo`) — excluded from workload savings until cluster autoscaling shrinks node capacity.\n",
+                idle_hr,
+                idle_hr * 730.0
+            ));
+        }
+        if let Some(shared_hr) = r.shared_hourly_cost {
+            out.push_str(&format!(
+                "- **Shared Overhead:** `${:.4}/hr` (`${:.2}/mo`) — separated from namespace workload allocation.\n",
+                shared_hr,
+                shared_hr * 730.0
+            ));
+        }
+    }
 
     if !r.limitations.is_empty() {
         out.push_str("\n## Limitations\n\n");

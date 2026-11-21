@@ -125,10 +125,16 @@ impl MetricsProviderPort for PrometheusMetricsAdapter {
                 self.query_scalar("sum(rate(process_cpu_seconds_total[2m])) * 1000")?;
         }
 
-        let mem_query = format!(
-            "sum(container_memory_working_set_bytes{{namespace=\"{ns}\",container!=\"\"}}) / 1048576"
+        let mem_window_query = format!(
+            "avg_over_time(sum(container_memory_working_set_bytes{{namespace=\"{ns}\",container!=\"\"}})[{window_secs}s:15s]) / 1048576"
         );
-        let memory_mib_avg = self.query_scalar(&mem_query)?;
+        let mut memory_mib_avg = self.query_scalar(&mem_window_query)?;
+        if memory_mib_avg.is_none() {
+            let mem_instant_query = format!(
+                "sum(container_memory_working_set_bytes{{namespace=\"{ns}\",container!=\"\"}}) / 1048576"
+            );
+            memory_mib_avg = self.query_scalar(&mem_instant_query)?;
+        }
 
         Ok(ObservedMetrics {
             cpu_millicores_avg,

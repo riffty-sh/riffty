@@ -58,14 +58,13 @@ impl OpenCostCostAdapter {
             )),
         }
     }
-}
-
-impl CostProviderPort for OpenCostCostAdapter {
-    fn attribute_cost(
+    /// Queries live OpenCost `/allocation/compute` and returns detailed namespace attribution
+    /// separated from cluster idle (`__idle__`) and shared (`__shared__` / `sharedCost`) costs.
+    pub fn attribute_detailed(
         &self,
         workload: &WorkloadReference,
         window: &MeasurementWindow,
-    ) -> Result<CostAttribution, String> {
+    ) -> Result<OpenCostDetailedAllocation, String> {
         let ns = workload.namespace.as_deref().unwrap_or(&workload.name);
         let mins = ((window.duration_secs / 60.0).round() as u64).max(5);
         let window_arg = format!("window={mins}m");
@@ -103,79 +102,24 @@ impl CostProviderPort for OpenCostCostAdapter {
 
         let body = String::from_utf8(out.stdout)
             .map_err(|e| format!("invalid UTF-8 response from OpenCost: {e}"))?;
-        parse_opencost_allocation(&body, ns)
+        parse_opencost_detailed(&body, ns)
+    }
+}
+
+impl CostProviderPort for OpenCostCostAdapter {
+    fn attribute_cost(
+        &self,
+        workload: &WorkloadReference,
+        window: &MeasurementWindow,
+    ) -> Result<CostAttribution, String> {
+        self.attribute_detailed(workload, window)
+            .map(|d| d.allocated)
     }
 }
 
 /// Parses an OpenCost `/allocation/compute?aggregate=namespace` JSON response for a namespace.
 pub fn parse_opencost_allocation(json: &str, namespace: &str) -> Result<CostAttribution, String> {
-    let root: Value =
-        serde_json::from_str(json).map_err(|e| format!("invalid OpenCost JSON response: {e}"))?;
-
-    if let Some(code) = root.get("code").and_then(Value::as_u64) {
-        if code != 200 {
-            let msg = root
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("non-200 status code");
-            return Err(format!("OpenCost returned HTTP code {code}: {msg}"));
-        }
-    }
-
-    let Some(data) = root.get("data").and_then(Value::as_array) else {
-        return Err("OpenCost response missing 'data' array".to_string());
-    };
-
-    let mut found: Option<&Value> = None;
-    for window_entry in data {
-        let Some(map) = window_entry.as_object() else {
-            continue;
-        };
-        if let Some(entry) = map.get(namespace) {
-            found = Some(entry);
-            break;
-        }
-        if let Some(entry) = map
-            .values()
-            .find(|v| v.get("name").and_then(Value::as_str) == Some(namespace))
-        {
-            found = Some(entry);
-            break;
-        }
-    }
-
-    let Some(alloc) = found else {
-        return Err(format!(
-            "namespace '{namespace}' not found in OpenCost /allocation/compute response"
-        ));
-    };
-
-    let total_cost = alloc
-        .get("totalCost")
-        .and_then(Value::as_f64)
-        .ok_or_else(|| {
-            format!("OpenCost allocation for '{namespace}' missing numeric 'totalCost'")
-        })?;
-    let minutes = alloc.get("minutes").and_then(Value::as_f64).unwrap_or(1.0);
-    let cpu_cores = alloc.get("cpuCores").and_then(Value::as_f64).unwrap_or(0.0);
-    let ram_bytes = alloc.get("ramBytes").and_then(Value::as_f64).unwrap_or(0.0);
-    let ram_gib = ram_bytes / BYTES_PER_GIB;
-
-    let hourly_cost = total_cost * (60.0 / minutes.max(1.0));
-    let monthly_cost = hourly_cost * HOURS_PER_MONTH;
-    let annual_cost = hourly_cost * HOURS_PER_YEAR;
-
-    Ok(CostAttribution {
-        kind: CostKind::Estimated,
-        currency: "USD".to_string(),
-        hourly_cost,
-        monthly_cost,
-        annual_cost,
-        basis: format!(
-            "OpenCost namespace '{namespace}' (cpuCores={cpu_cores:.3}, ramGiB={ram_gib:.3}, minutes={minutes:.1})"
-        ),
-        pricing_source: "opencost (/allocation/compute)".to_string(),
-    })
+    parse_opencost_detailed(json, namespace).map(|d| d.allocated)
 }
 
 /// Parses an OpenCost `/allocation/compute?aggregate=namespace` JSON response into a detailed

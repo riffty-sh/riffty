@@ -91,7 +91,7 @@ pub fn default_infra_registry() -> InfraPluginRegistry {
             api_compat: "1.x".to_string(),
             capabilities: vec![InfraCapability::Cost],
             requires_external_infra: true,
-            description: "Optional OpenCost actual cluster billing attribution provider".to_string(),
+            description: "Optional OpenCost cluster cost allocation provider".to_string(),
         },
         opencost_health,
     );
