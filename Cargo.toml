@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/riffty_core",
+    "crates/riffty_ab_core",
     "crates/riffty_pipeline",
     "crates/riffty_rules_builtin",
     "crates/adapters/riffty_adapter_ruff_ast",
@@ -15,6 +16,7 @@ members = [
     "crates/adapters/riffty_adapter_plugin",
     "apps/riffty_mcp",
     "apps/riffty_cli",
+    "apps/riffty_ab",
     "tests/conformance",
 ]
 
@@ -27,6 +29,7 @@ repository = "https://github.com/riffty-sh/riffty"
 
 [workspace.dependencies]
 riffty_core = { version = "0.2.0", path = "crates/riffty_core" }
+riffty_ab_core = { version = "0.2.0", path = "crates/riffty_ab_core" }
 riffty_pipeline = { version = "0.2.0", path = "crates/riffty_pipeline" }
 riffty_rules_builtin = { version = "0.2.0", path = "crates/riffty_rules_builtin" }
 riffty_adapter_ruff_ast = { version = "0.2.0", path = "crates/adapters/riffty_adapter_ruff_ast" }

@@ -1,0 +1,16 @@
+[package]
+name = "riffty_ab"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Deterministic A/B empirical verification runner and read-only discovery CLI for riffty"
+
+[[bin]]
+name = "riffty-ab"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+riffty_ab_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
