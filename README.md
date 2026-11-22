@@ -113,8 +113,11 @@ riffty/
 │       ├── riffty_adapter_tsrs/      # Pure-Rust JS/TS Tier 2 (`tsrs`)
 │       ├── riffty_adapter_ast_grep/  # PatternMatcherPort via `ast-grep-core`
 │       ├── riffty_adapter_refaster/  # Declarative YAML Refaster bridge
+│       ├── riffty_adapter_plugin/    # Out-of-process JSON-RPC language plugin bridge
 │       ├── riffty_adapter_infra/     # Local, K8s HPA, Prometheus, OpenCost, Public Pricing adapters
 │       └── riffty_adapter_fs/        # WorkspaceVfsPort, PatchApplierPort, GitDiffPort
+├── plugins/
+│   └── riffty-java/                  # Bundled JDK 25 / Leyden AOT / javac Trees / Error Prone / Picnic runner
 ├── apps/
 │   ├── riffty_cli/                   # Driving CLI (`check`, `doctor`, `explain`, `infra`, `efficiency`, `mcp`)
 │   ├── riffty_ab/                    # Empirical A/B runner & `compare-metrics` CLI
