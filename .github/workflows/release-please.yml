@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  id-token: write
+  attestations: write
+  packages: write
 
 jobs:
   release-please:
@@ -20,8 +23,18 @@ jobs:
         id: release
         uses: googleapis/release-please-action@v4
         with:
-          # Tip: configure a fine-grained PAT or GitHub App token as RELEASE_PLEASE_TOKEN
-          # so tags created by release-please automatically trigger release.yml.
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  build-verify-publish:
+    name: Build, Clean-Room Verify & Attach Release Artifacts
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      packages: write
