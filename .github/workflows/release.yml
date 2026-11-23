@@ -137,97 +137,211 @@ jobs:
     name: Clean-Room Verify (Linux Debian 12 — Zero Runtimes)
     needs: build-binaries
     runs-on: ubuntu-latest
-    container:
-      image: debian:bookworm-slim
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           name: dist-x86_64-unknown-linux-gnu
           path: /tmp/dist
-      - name: Verify SHA-256, lean core, and on-demand Java hydration in bare Debian 12
+      - name: Verify installer, SHA-256, and live on-demand Java hydration in bare Debian 12
         shell: bash
         run: |
           set -euo pipefail
-          # Prove container has zero Python/Node/Java preinstalled
-          for bin in java javac python3 node npm cargo; do
-            if command -v "$bin" >/dev/null 2>&1; then
-              echo "ERROR: unexpected runtime $bin in clean-room container" >&2
-              exit 1
+          cp scripts/install.sh /tmp/dist/riffty-installer.sh
+          python3 -m http.server 18080 --bind 127.0.0.1 --directory /tmp/dist >/tmp/http.log 2>&1 &
+          HTTP_PID=$!
+          trap 'kill "$HTTP_PID" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:18080/riffty-installer.sh >/dev/null; then
+              break
             fi
+            sleep 0.2
           done
-          cd /tmp/dist
-          sha256sum -c riffty-x86_64-unknown-linux-gnu.tar.gz.sha256
-          sha256sum -c riffty-java-x86_64-unknown-linux-gnu.tar.gz.sha256
 
-          mkdir -p /tmp/bin /tmp/cache/plugins/riffty-java
-          tar -xzf riffty-x86_64-unknown-linux-gnu.tar.gz -C /tmp/bin
-          export PATH="/tmp/bin:/usr/bin:/bin"
-          export RIFFTY_CACHE_DIR="/tmp/cache"
+          docker run --rm --network=host debian:bookworm-slim bash -euo pipefail -c '
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends curl ca-certificates >/dev/null
+            rm -rf /var/lib/apt/lists/*
 
-          VER="$(riffty --version | awk '{print $2}')"
-          riffty-ab --version
-          riffty plugin status
+            # Prove container has zero Python/Node/Java/Cargo preinstalled
+            for bin in java javac python3 node npm cargo; do
+              if command -v "$bin" >/dev/null 2>&1; then
+                echo "ERROR: unexpected runtime $bin in clean-room container" >&2
+                exit 1
+              fi
+            done
 
-          # Pre-hydrate from exact release sidecar tarball to simulate cached on-demand hydration
-          mkdir -p "/tmp/cache/plugins/riffty-java/v${VER}"
-          tar -xzf riffty-java-x86_64-unknown-linux-gnu.tar.gz -C "/tmp/cache/plugins/riffty-java/v${VER}"
+            export HOME="/tmp/clean-home"
+            mkdir -p "$HOME" /tmp/demo
 
-          mkdir -p /tmp/demo && cd /tmp/demo
-          printf 'async def f(): pass\ndef g(): f()\n' > app.py
-          printf 'export const x = [3, 1, 2].sort();\n' > app.ts
-          printf '{"compilerOptions":{"strict":true}}\n' > tsconfig.json
-          printf 'import java.math.BigDecimal;\nclass App { BigDecimal x = new BigDecimal(0.1); }\n' > App.java
+            # Run actual install.sh via curl | sh against local ephemeral HTTP server
+            curl -LsSf http://127.0.0.1:18080/riffty-installer.sh | RIFFTY_BASE_URL=http://127.0.0.1:18080 sh
+            grep -Fq "$HOME/.local/bin" "$HOME/.bashrc" || grep -Fq "$HOME/.local/bin" "$HOME/.profile"
 
-          riffty plugin status
-          rc=0
-          riffty check --offline --require-tier2 --fix --dry-run --summary . || rc=$?
-          if [ "$rc" -ge 2 ]; then
-            echo "ERROR: clean-room Linux check failed with fatal exit $rc" >&2
-            exit "$rc"
-          fi
+            export PATH="$HOME/.local/bin:/usr/bin:/bin"
+            riffty --version
+            riffty-ab --version
+            riffty plugin status
+
+            cd /tmp/demo
+            printf "async def f(): pass\ndef g(): f()\n" > app.py
+            printf "export const x = [3, 1, 2].sort();\n" > app.ts
+            printf "{\"compilerOptions\":{\"strict\":true}}\n" > tsconfig.json
+            printf "import java.math.BigDecimal;\nclass App { BigDecimal x = new BigDecimal(0.1); }\n" > App.java
+
+            # Prove live on-demand SHA-256-verified riffty-java hydration + Tier 2 execution
+            rc=0
+            RIFFTY_PLUGIN_BASE_URL=http://127.0.0.1:18080 riffty check --require-tier2 --fix --dry-run --summary . || rc=$?
+            if [ "$rc" -ge 2 ]; then
+              echo "ERROR: clean-room Linux check failed with fatal exit $rc" >&2
+              exit "$rc"
+            fi
+            riffty plugin status | grep -q "READY (SHA-256 OK)"
+          '
 
   verify-bundle-macos:
     name: Clean-Room Verify (macOS arm64 — Stripped env -i)
     needs: build-binaries
     runs-on: macos-14
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           name: dist-aarch64-apple-darwin
           path: /tmp/dist
-      - name: Verify SHA-256 and zero-JAVA_HOME execution on macOS arm64
+      - name: Verify installer, SHA-256, and live on-demand Java hydration on macOS arm64
         shell: bash
         run: |
           set -euo pipefail
-          cd /tmp/dist
-          shasum -a 256 -c riffty-aarch64-apple-darwin.tar.gz.sha256
-          shasum -a 256 -c riffty-java-aarch64-apple-darwin.tar.gz.sha256
+          cp scripts/install.sh /tmp/dist/riffty-installer.sh
+          python3 -m http.server 18080 --bind 127.0.0.1 --directory /tmp/dist >/tmp/http.log 2>&1 &
+          HTTP_PID=$!
+          trap 'kill "$HTTP_PID" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:18080/riffty-installer.sh >/dev/null; then
+              break
+            fi
+            sleep 0.2
+          done
 
           CLEAN_HOME="$(mktemp -d)"
-          mkdir -p "$CLEAN_HOME/bin" "$CLEAN_HOME/demo"
-          tar -xzf riffty-aarch64-apple-darwin.tar.gz -C "$CLEAN_HOME/bin"
-          VER="$("$CLEAN_HOME/bin/riffty" --version | awk '{print $2}')"
-          mkdir -p "$CLEAN_HOME/cache/plugins/riffty-java/v${VER}"
-          tar -xzf riffty-java-aarch64-apple-darwin.tar.gz -C "$CLEAN_HOME/cache/plugins/riffty-java/v${VER}"
-
+          mkdir -p "$CLEAN_HOME/demo"
           printf 'async def f(): pass\ndef g(): f()\n' > "$CLEAN_HOME/demo/app.py"
           printf 'export const x = [3, 1, 2].sort();\n' > "$CLEAN_HOME/demo/app.ts"
           printf '{"compilerOptions":{"strict":true}}\n' > "$CLEAN_HOME/demo/tsconfig.json"
           printf 'import java.math.BigDecimal;\nclass App { BigDecimal x = new BigDecimal(0.1); }\n' > "$CLEAN_HOME/demo/App.java"
 
-          env -i HOME="$CLEAN_HOME" RIFFTY_CACHE_DIR="$CLEAN_HOME/cache" PATH="$CLEAN_HOME/bin:/usr/bin:/bin" bash -euo pipefail -c '
+          env -i HOME="$CLEAN_HOME" SHELL="/bin/zsh" PATH="/usr/bin:/bin" bash -euo pipefail -c '
+            curl -LsSf http://127.0.0.1:18080/riffty-installer.sh | RIFFTY_BASE_URL=http://127.0.0.1:18080 sh
+            grep -Fq "$HOME/.local/bin" "$HOME/.zshrc"
+
+            export PATH="$HOME/.local/bin:/usr/bin:/bin"
             riffty --version
             riffty-ab --version
             riffty plugin status
+
             cd "$HOME/demo"
             rc=0
-            riffty check --offline --require-tier2 --fix --dry-run --summary . || rc=$?
-            if [ "$rc" -ge 2 ]; then exit "$rc"; fi
+            RIFFTY_PLUGIN_BASE_URL=http://127.0.0.1:18080 riffty check --require-tier2 --fix --dry-run --summary . || rc=$?
+            if [ "$rc" -ge 2 ]; then
+              echo "ERROR: clean-room macOS check failed with fatal exit $rc" >&2
+              exit "$rc"
+            fi
+            riffty plugin status | grep -q "READY (SHA-256 OK)"
           '
+
+  verify-bundle-windows:
+    name: Clean-Room Verify (Windows x64 — Stripped PATH)
+    needs: build-binaries
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-x86_64-pc-windows-msvc
+          path: ${{ runner.temp }}\dist
+      - name: Verify installer, SHA-256, and live on-demand Java hydration on Windows x64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $distDir = Join-Path $env:RUNNER_TEMP "dist"
+          Copy-Item "scripts\install.ps1" (Join-Path $distDir "riffty-installer.ps1") -Force
+
+          $server = Start-Process -FilePath "python" -ArgumentList "-m", "http.server", "18080", "--bind", "127.0.0.1", "--directory", $distDir -PassThru -NoNewWindow
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              try {
+                Invoke-WebRequest -Uri "http://127.0.0.1:18080/riffty-installer.ps1" -UseBasicParsing | Out-Null
+                $ready = $true
+                break
+              } catch {
+                Start-Sleep -Milliseconds 200
+              }
+            }
+            if (-not $ready) { throw "Local HTTP server did not become ready" }
+
+            $cleanRoot = Join-Path $env:RUNNER_TEMP ("clean-" + [System.Guid]::NewGuid().ToString())
+            $installDir = Join-Path $cleanRoot "bin"
+            $cacheDir = Join-Path $cleanRoot "cache"
+            $demoDir = Join-Path $cleanRoot "demo"
+            New-Item -ItemType Directory -Force -Path $demoDir | Out-Null
+
+            Set-Content -Path (Join-Path $demoDir "app.py") -Value "async def f(): pass`ndef g(): f()`n" -NoNewline
+            Set-Content -Path (Join-Path $demoDir "app.ts") -Value "export const x = [3, 1, 2].sort();`n" -NoNewline
+            Set-Content -Path (Join-Path $demoDir "tsconfig.json") -Value '{"compilerOptions":{"strict":true}}' -NoNewline
+            Set-Content -Path (Join-Path $demoDir "App.java") -Value "import java.math.BigDecimal;`nclass App { BigDecimal x = new BigDecimal(0.1); }`n" -NoNewline
+
+            # Strip system Python/Node/Java/Cargo from PATH and clear JAVA_HOME
+            $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
+            Remove-Item Env:JAVA_HOME -ErrorAction SilentlyContinue
+            foreach ($bin in @("java", "javac", "python", "python3", "node", "npm", "cargo")) {
+              if (Get-Command $bin -ErrorAction SilentlyContinue) {
+                throw "Unexpected runtime $bin found on stripped Windows PATH"
+              }
+            }
+
+            $env:RIFFTY_BASE_URL = "http://127.0.0.1:18080"
+            $env:RIFFTY_INSTALL_DIR = $installDir
+            $env:RIFFTY_CACHE_DIR = $cacheDir
+            $env:RIFFTY_PLUGIN_BASE_URL = "http://127.0.0.1:18080"
+
+            Invoke-RestMethod -Uri "http://127.0.0.1:18080/riffty-installer.ps1" | Invoke-Expression
+
+            $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+            if (-not ($userPath -split ";" -contains $installDir)) {
+              throw "install.ps1 did not persist $installDir to User Path"
+            }
+
+            riffty --version
+            riffty-ab --version
+            riffty plugin status
+
+            Push-Location $demoDir
+            try {
+              & riffty check --require-tier2 --fix --dry-run --summary .
+              $rc = $LASTEXITCODE
+              if ($rc -ge 2) {
+                throw "Clean-room Windows check failed with fatal exit $rc"
+              }
+            } finally {
+              Pop-Location
+            }
+
+            $statusOut = (& riffty plugin status | Out-String)
+            Write-Host $statusOut
+            if ($statusOut -notmatch "READY \(SHA-256 OK\)") {
+              throw "Expected riffty-java Tier 2 to be READY (SHA-256 OK) after on-demand hydration"
+            }
+          } finally {
+            if ($server -and -not $server.HasExited) {
+              Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
 
   publish-release:
     name: Publish Attested GitHub Release + SBOM
-    needs: [build-binaries, verify-bundle-linux, verify-bundle-macos]
+    needs: [build-binaries, verify-bundle-linux, verify-bundle-macos, verify-bundle-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

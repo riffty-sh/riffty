@@ -32,7 +32,9 @@ TARGET="${ARCH_TRIPLE}-${OS_TRIPLE}"
 ARCHIVE="riffty-${TARGET}.tar.gz"
 SHA_FILE="${ARCHIVE}.sha256"
 
-if [ "$VERSION" = "latest" ]; then
+if [ -n "${RIFFTY_BASE_URL:-}" ]; then
+  BASE_URL="${RIFFTY_BASE_URL%/}"
+elif [ "$VERSION" = "latest" ]; then
   BASE_URL="https://github.com/${REPO}/releases/latest/download"
 else
   BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
@@ -79,7 +81,42 @@ if [ -d "${TMP_DIR}/riffty-java" ]; then
 fi
 
 echo "Installed verified riffty to ${INSTALL_DIR} (Python & JS/TS built-in; Java Tier 2 auto-hydrates on first .java check or via 'riffty plugin install java')."
+
+add_to_profile() {
+  _profile="$1"
+  _export_line="export PATH=\"${INSTALL_DIR}:\$PATH\""
+  if [ -f "$_profile" ] && grep -Fq "$INSTALL_DIR" "$_profile" 2>/dev/null; then
+    return 0
+  fi
+  if printf '\n# Added by riffty installer\n%s\n' "$_export_line" >> "$_profile" 2>/dev/null; then
+    echo "Added ${INSTALL_DIR} to PATH in ${_profile}."
+    return 0
+  fi
+  return 1
+}
+
 case ":${PATH}:" in
   *":${INSTALL_DIR}:"*) ;;
-  *) echo "Note: add ${INSTALL_DIR} to your PATH: export PATH=\"${INSTALL_DIR}:\$PATH\"" ;;
+  *)
+    if [ "${RIFFTY_NO_MODIFY_PATH:-0}" != "1" ] && [ -n "${HOME:-}" ] && [ -d "${HOME}" ]; then
+      _updated=0
+      _shell_name="$(basename "${SHELL:-}")"
+      if [ "$_shell_name" = "zsh" ] || [ -f "${HOME}/.zshrc" ]; then
+        if add_to_profile "${HOME}/.zshrc"; then _updated=1; fi
+      fi
+      if [ "$_shell_name" = "bash" ] || [ -f "${HOME}/.bashrc" ]; then
+        if add_to_profile "${HOME}/.bashrc"; then _updated=1; fi
+      fi
+      if [ "$_updated" = "0" ] || [ -f "${HOME}/.profile" ]; then
+        if add_to_profile "${HOME}/.profile"; then _updated=1; fi
+      fi
+      if [ "$_updated" = "1" ]; then
+        echo "Restart your shell or run: export PATH=\"${INSTALL_DIR}:\$PATH\""
+      else
+        echo "Note: add ${INSTALL_DIR} to your PATH: export PATH=\"${INSTALL_DIR}:\$PATH\""
+      fi
+    else
+      echo "Note: add ${INSTALL_DIR} to your PATH: export PATH=\"${INSTALL_DIR}:\$PATH\""
+    fi
+    ;;
 esac
