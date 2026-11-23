@@ -5,6 +5,8 @@ All notable changes to `riffty` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
 ## [0.4.0] - 2026-11-23
 
 ### Added
@@ -55,4 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Single-Pass Pipeline (`riffty_pipeline`)**: $O(\text{nodes})$ rule dispatcher, deterministic overlap conflict resolver, bottom-to-top byte patcher, and bounded 10-pass fixpoint loop.
 - **Driven Adapters**: `riffty_adapter_fs`, `riffty_adapter_ruff_ast`, `riffty_adapter_ty` (Astral `ty` Salsa DB), `riffty_adapter_ast_grep`, and `riffty_adapter_refaster`.
 - **Built-in Bug Checkers (`riffty_rules_builtin`)**: `RFT-004`, `RFT-015`, `RFT-118`, `RFT-119`, `RFT-202`, and `RFT-301` with SciPy #20068 golden conformance tests.
+
+[Unreleased]: https://github.com/riffty-sh/riffty/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/riffty-sh/riffty/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/riffty-sh/riffty/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/riffty-sh/riffty/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/riffty-sh/riffty/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/riffty-sh/riffty/releases/tag/v0.1.0
 
