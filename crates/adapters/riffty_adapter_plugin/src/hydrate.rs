@@ -157,10 +157,10 @@ fn extract_zip_safe(archive_bytes: &[u8], dest_dir: &Path) -> Result<(), String>
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            "Expand-Archive -Path $args[0] -DestinationPath $args[1] -Force",
+            "Expand-Archive -LiteralPath $env:RIFFTY_ZIP_SRC -DestinationPath $env:RIFFTY_ZIP_DST -Force",
         ])
-        .arg(&tmp_zip)
-        .arg(dest_dir)
+        .env("RIFFTY_ZIP_SRC", &tmp_zip)
+        .env("RIFFTY_ZIP_DST", dest_dir)
         .status()
         .map_err(|e| format!("failed to invoke PowerShell Expand-Archive: {e}"))?;
     let _ = fs::remove_file(&tmp_zip);
