@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-  "release-type": "rust",
+  "release-type": "simple",
   "include-component-in-tag": false,
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
@@ -21,6 +21,10 @@
       "package-name": "riffty",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
+        {
+          "type": "generic",
+          "path": "Cargo.toml"
+        },
         {
           "type": "pom",
           "path": "plugins/riffty-java/pom.xml"
