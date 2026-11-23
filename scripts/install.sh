@@ -52,14 +52,12 @@ fi
 if [ -f "${TMP_DIR}/riffty-ab" ]; then
   install -m 0755 "${TMP_DIR}/riffty-ab" "${INSTALL_DIR}/riffty-ab"
 fi
-if [ -f "${TMP_DIR}/riffty-java-runner.jar" ]; then
-  install -m 0644 "${TMP_DIR}/riffty-java-runner.jar" "${INSTALL_DIR}/riffty-java-runner.jar"
-fi
-if [ -f "${TMP_DIR}/riffty-java.sha256" ]; then
-  install -m 0644 "${TMP_DIR}/riffty-java.sha256" "${INSTALL_DIR}/riffty-java.sha256"
+if [ -d "${TMP_DIR}/riffty-java" ]; then
+  rm -rf "${INSTALL_DIR}/riffty-java"
+  cp -R "${TMP_DIR}/riffty-java" "${INSTALL_DIR}/riffty-java"
 fi
 
-echo "Installed riffty (and companion binaries) to ${INSTALL_DIR}"
+echo "Installed self-contained riffty bundle (Python, JS/TS, Java Tier 1+2 with bundled JDK 25 runtime) to ${INSTALL_DIR}"
 case ":${PATH}:" in
   *":${INSTALL_DIR}:"*) ;;
   *) echo "Note: add ${INSTALL_DIR} to your PATH: export PATH=\"${INSTALL_DIR}:\$PATH\"" ;;

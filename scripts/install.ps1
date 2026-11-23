@@ -30,13 +30,12 @@ try {
     if (Test-Path (Join-Path $TmpDir "riffty-ab.exe")) {
         Copy-Item -Path (Join-Path $TmpDir "riffty-ab.exe") -Destination (Join-Path $InstallDir "riffty-ab.exe") -Force
     }
-    if (Test-Path (Join-Path $TmpDir "riffty-java-runner.jar")) {
-        Copy-Item -Path (Join-Path $TmpDir "riffty-java-runner.jar") -Destination (Join-Path $InstallDir "riffty-java-runner.jar") -Force
+    if (Test-Path (Join-Path $TmpDir "riffty-java")) {
+        $JavaDest = Join-Path $InstallDir "riffty-java"
+        if (Test-Path $JavaDest) { Remove-Item -Recurse -Force $JavaDest }
+        Copy-Item -Recurse -Force -Path (Join-Path $TmpDir "riffty-java") -Destination $JavaDest
     }
-    if (Test-Path (Join-Path $TmpDir "riffty-java.sha256")) {
-        Copy-Item -Path (Join-Path $TmpDir "riffty-java.sha256") -Destination (Join-Path $InstallDir "riffty-java.sha256") -Force
-    }
-    Write-Host "Installed riffty (and companion binaries) to $InstallDir"
+    Write-Host "Installed self-contained riffty bundle (Python, JS/TS, Java Tier 1+2 with bundled JDK 25 runtime) to $InstallDir"
 } finally {
     Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
 }

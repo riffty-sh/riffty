@@ -52,9 +52,14 @@ pub fn discover_java_sidecar_bundle() -> Option<JavaSidecarBundle> {
         .to_ascii_lowercase();
 
     // Prefer bundled jlink JDK 25 runtime right beside runner_jar (zero JAVA_HOME needed)
+    let bundled_java_rel = if cfg!(windows) {
+        "runtime/bin/java.exe"
+    } else {
+        "runtime/bin/java"
+    };
     let bundled_java = runner_jar
         .parent()
-        .map(|d| d.join("runtime/bin/java"))
+        .map(|d| d.join(bundled_java_rel))
         .filter(|p| p.is_file());
     let java_bin = bundled_java.or_else(discover_jdk25_bin)?;
 
@@ -127,6 +132,14 @@ fn discover_runner_jar() -> Option<PathBuf> {
     }
     if let Ok(exe) = std::env::current_exe() {
         for anc in exe.ancestors() {
+            let bundled = anc.join("riffty-java/riffty-java-runner.jar");
+            if bundled.is_file() {
+                return Some(bundled);
+            }
+            let libexec = anc.join("libexec/riffty-java/riffty-java-runner.jar");
+            if libexec.is_file() {
+                return Some(libexec);
+            }
             let cand = anc.join("plugins/riffty-java/dist/riffty-java-runner.jar");
             if cand.is_file() {
                 return Some(cand);
@@ -411,6 +424,7 @@ fn build_hardened_java_command(bundle: &JavaSidecarBundle, daemon_mode: bool) ->
         }
     }
     let max_heap = std::env::var("RIFFTY_JAVA_MAX_HEAP").unwrap_or_else(|_| "1g".to_string());
+    cmd.arg("-Xlog:all=off");
     cmd.arg("-XX:+UseCompactObjectHeaders");
     if daemon_mode {
         cmd.arg("-XX:+UseZGC");

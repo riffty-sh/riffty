@@ -5,6 +5,12 @@ All notable changes to `riffty` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-11-23
+
+### Changed
+- **100% Zero-External-Setup Bundles (`release.yml`, `Dockerfile`, `install.sh`, `install.ps1`, `homebrew-tap`)**: Every platform release archive, Docker image, and Homebrew install now packages the self-contained `jlink` JDK 25 runtime + Project Leyden AOT cache (`riffty-java/`) alongside `riffty`, `riffty_mcp`, and `riffty-ab`, eliminating any local JDK, Python, or Node.js prerequisite on user machines.
+- **Cross-Platform Bundled Runtime Discovery (`riffty_adapter_plugin`)**: Added `riffty-java/` and `libexec/riffty-java/` discovery paths and Windows `runtime/bin/java.exe` support.
+
 ## [0.3.0] - 2026-11-23
 
 ### Added

@@ -12,8 +12,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-java-sidecar:
-    name: Build Java Tier 2 Sidecar
+  build-java-sidecar-jar:
+    name: Build Java Tier 2 Sidecar JAR
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -25,14 +25,14 @@ jobs:
         run: bash plugins/riffty-java/build.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: java-sidecar
+          name: java-sidecar-jar
           path: |
             plugins/riffty-java/dist/riffty-java-runner.jar
             plugins/riffty-java/dist/riffty-java.sha256
 
   build-binaries:
-    name: Build (${{ matrix.target }})
-    needs: build-java-sidecar
+    name: Build Self-Contained Bundle (${{ matrix.target }})
+    needs: build-java-sidecar-jar
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -45,7 +45,7 @@ jobs:
             os: macos-14
             ext: tar.gz
           - target: x86_64-apple-darwin
-            os: macos-14
+            os: macos-15-intel
             ext: tar.gz
           - target: x86_64-pc-windows-msvc
             os: windows-latest
@@ -55,22 +55,30 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
       - uses: actions/download-artifact@v4
         with:
-          name: java-sidecar
-          path: java-sidecar
+          name: java-sidecar-jar
+          path: plugins/riffty-java/dist
+      - name: Package self-contained jlink JDK 25 runtime + Leyden AOT cache
+        shell: bash
+        env:
+          SKIP_JAR_BUILD: "1"
+        run: bash plugins/riffty-java/package_jlink_aot.sh
       - name: Build release binaries
         run: cargo build --release --locked --target ${{ matrix.target }} --bin riffty --bin riffty_mcp --bin riffty-ab
-      - name: Package Unix archive
+      - name: Package Unix archive (zero-external-setup bundle)
         if: matrix.ext == 'tar.gz'
         shell: bash
         run: |
-          mkdir -p dist staging
+          mkdir -p dist staging/riffty-java
           cp "target/${{ matrix.target }}/release/riffty" staging/
           cp "target/${{ matrix.target }}/release/riffty_mcp" staging/
           cp "target/${{ matrix.target }}/release/riffty-ab" staging/
-          cp java-sidecar/riffty-java-runner.jar staging/
-          cp java-sidecar/riffty-java.sha256 staging/
+          cp -R plugins/riffty-java/dist/. staging/riffty-java/
           cp LICENSE README.md staging/
           tar -C staging -czf "dist/riffty-${{ matrix.target }}.tar.gz" .
           if command -v sha256sum >/dev/null 2>&1; then
@@ -78,16 +86,15 @@ jobs:
           else
             (cd dist && shasum -a 256 "riffty-${{ matrix.target }}.tar.gz" > "riffty-${{ matrix.target }}.tar.gz.sha256")
           fi
-      - name: Package Windows archive
+      - name: Package Windows archive (zero-external-setup bundle)
         if: matrix.ext == 'zip'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist, staging | Out-Null
+          New-Item -ItemType Directory -Force -Path dist, staging, staging/riffty-java | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/riffty.exe" staging/
           Copy-Item "target/${{ matrix.target }}/release/riffty_mcp.exe" staging/
           Copy-Item "target/${{ matrix.target }}/release/riffty-ab.exe" staging/
-          Copy-Item "java-sidecar/riffty-java-runner.jar" staging/
-          Copy-Item "java-sidecar/riffty-java.sha256" staging/
+          Copy-Item -Recurse -Force "plugins/riffty-java/dist/*" staging/riffty-java/
           Copy-Item LICENSE, README.md staging/
           Compress-Archive -Path staging/* -DestinationPath "dist/riffty-${{ matrix.target }}.zip"
           $hash = (Get-FileHash "dist/riffty-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower()

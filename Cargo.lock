@@ -1759,7 +1759,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "riffty_ab"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "clap",
  "riffty_ab_core",
@@ -1769,7 +1769,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_ab_core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1779,7 +1779,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_adapter_ast_grep"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "ast-grep-core",
  "ast-grep-language",
@@ -1788,7 +1788,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_adapter_fs"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "ignore",
  "riffty_core",
@@ -1797,7 +1797,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_adapter_infra"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "riffty_infra_core",
  "serde",
@@ -1807,7 +1807,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_adapter_java_fast"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "ast-grep-core",
  "ast-grep-language",
@@ -1817,7 +1817,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_adapter_jsts_fast"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "oxc_allocator",
  "oxc_ast",
@@ -1833,7 +1833,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_adapter_plugin"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "riffty_core",
  "serde",
@@ -1843,7 +1843,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_adapter_refaster"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "riffty_adapter_ast_grep",
  "riffty_adapter_ruff_ast",
@@ -1857,7 +1857,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_adapter_ruff_ast"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "riffty_core",
  "ruff_python_ast",
@@ -1868,7 +1868,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_adapter_tsrs"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "oxc_allocator",
  "oxc_ast",
@@ -1894,7 +1894,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_adapter_ty"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "riffty_core",
  "ruff_db",
@@ -1911,7 +1911,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "clap",
  "riffty_adapter_ast_grep",
@@ -1937,7 +1937,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_conformance"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "riffty_ab_core",
  "riffty_adapter_ast_grep",
@@ -1959,7 +1959,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1967,7 +1967,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_infra_core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1975,7 +1975,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_mcp"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "riffty_adapter_ast_grep",
  "riffty_adapter_fs",
@@ -1998,7 +1998,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_pipeline"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "riffty_core",
  "serde",
@@ -2007,7 +2007,7 @@ dependencies = [
 
 [[package]]
 name = "riffty_rules_builtin"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "riffty_adapter_ruff_ast",
  "riffty_adapter_ty",
