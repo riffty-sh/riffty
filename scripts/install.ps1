@@ -27,7 +27,16 @@ try {
     if (Test-Path (Join-Path $TmpDir "riffty_mcp.exe")) {
         Copy-Item -Path (Join-Path $TmpDir "riffty_mcp.exe") -Destination (Join-Path $InstallDir "riffty_mcp.exe") -Force
     }
-    Write-Host "Installed riffty to $InstallDir\riffty.exe"
+    if (Test-Path (Join-Path $TmpDir "riffty-ab.exe")) {
+        Copy-Item -Path (Join-Path $TmpDir "riffty-ab.exe") -Destination (Join-Path $InstallDir "riffty-ab.exe") -Force
+    }
+    if (Test-Path (Join-Path $TmpDir "riffty-java-runner.jar")) {
+        Copy-Item -Path (Join-Path $TmpDir "riffty-java-runner.jar") -Destination (Join-Path $InstallDir "riffty-java-runner.jar") -Force
+    }
+    if (Test-Path (Join-Path $TmpDir "riffty-java.sha256")) {
+        Copy-Item -Path (Join-Path $TmpDir "riffty-java.sha256") -Destination (Join-Path $InstallDir "riffty-java.sha256") -Force
+    }
+    Write-Host "Installed riffty (and companion binaries) to $InstallDir"
 } finally {
     Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
 }

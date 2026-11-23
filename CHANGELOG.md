@@ -5,6 +5,20 @@ All notable changes to `riffty` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-23
+
+### Added
+- **Multi-Language Remediation Engine**:
+  - **Java (`riffty_adapter_java_fast`, `riffty_adapter_plugin`, `plugins/riffty-java`)**: Zero-JVM Tier 1 (`tree-sitter-java`) + Tier 2 semantic sidecar (JDK 25 `javac` `Trees`, Error Prone, Picnic, SHA-256 verification, warm daemon mode, and declarative `[[java.architecture.forbid]]`).
+  - **JavaScript / TypeScript (`riffty_adapter_jsts_fast`, `riffty_adapter_tsrs`)**: Pure-Rust Tier 1 (`oxc`) + Tier 2 (`tsrs`) with zero Node.js runtime dependency and `[[jsts.architecture.forbid]]`.
+- **Empirical A/B Verification (`riffty_ab_core`, `apps/riffty_ab`)**: `riffty-ab` CLI with alternating `AB/BA` execution, exact Student-t 95% CI, p95/p99/max statistics, JUnit/TAP parsers, tamper guard, and SHA-256 attestation.
+- **Infrastructure Efficiency & Cost Intelligence (`riffty_infra_core`, `riffty_adapter_infra`)**: Pure hexagonal core (`serde` + `serde_json` only) with `riffty infra providers` and `riffty efficiency analyze` (`CoreOnly` and `Connected` modes), native Rust `ureq` HTTP adapters for Prometheus & OpenCost (with optional bearer-token auth), Kubernetes HPA, and public pricing (`CostKind::Estimated`).
+- **Hexagonal Architecture Conformance Suite (`tests/conformance/tests/architecture_contracts.rs`)**: Automated purity and contract checks covering `riffty_infra_core`, `riffty_ab_core`, native HTTP adapters, Java/JS-TS `LanguageAnalyzerPort` implementations, and fail-closed SHA-256 sidecar verification.
+
+### Changed
+- **Packaging & Distribution**: `release.yml`, `Dockerfile`, `scripts/install.sh`, `scripts/install.ps1`, and Homebrew tap now package and install `riffty-ab` and the Java Tier 2 sidecar bundle (`riffty-java-runner.jar` + `riffty-java.sha256`) alongside `riffty` and `riffty_mcp`.
+- **CI Hardening**: Added `cargo fmt --all -- --check` gate and Maven test execution in `plugins/riffty-java/build.sh`; untracked and gitignored the 21 MB shaded `riffty-java-runner.jar` from Git history.
+
 ## [0.2.0] - 2026-11-16
 
 ### Added

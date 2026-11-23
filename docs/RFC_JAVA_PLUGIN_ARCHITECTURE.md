@@ -1,6 +1,6 @@
 # RFC: Zero-Config Java Plugin Architecture for `riffty`
 
-- **Status:** Draft — Ready for Rust & Java Language Expert Review
+- **Status:** Implemented & Verified — Milestones 0–3 Complete (Tier 1 `tree-sitter-java`, Tier 2 JDK 25 `javac` `Trees` + Error Prone/Picnic, Warm Daemon & `[[java.architecture.forbid]]`)
 - **Target Repo:** `riffty` (`riffty-sh/riffty`)
 - **Contributors:** Performance Architect, Code Elegance Architect, Security & Supply-Chain Architect, Java PO/PM & Enterprise Sales Lead, Principal DX Architect
 - **Last Updated:** 2026-11-19

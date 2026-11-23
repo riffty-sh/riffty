@@ -65,11 +65,8 @@ pub fn run_scan(args: ScanArgs) -> Result<(), String> {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let tmp = std::env::temp_dir().join(format!(
-            "riffty_ab_scan_{}_{}",
-            std::process::id(),
-            nanos
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("riffty_ab_scan_{}_{}", std::process::id(), nanos));
         git_ops::clone_head_shallow(&args.target, &tmp, args.commits)?;
         (tmp, args.target.clone(), true)
     } else {
@@ -89,10 +86,7 @@ pub fn run_scan(args: ScanArgs) -> Result<(), String> {
     let report = scan_res?;
 
     if let Some(ref manifest_out) = args.emit_manifest {
-        let rules_str = args
-            .rules
-            .as_ref()
-            .map(|p| p.display().to_string());
+        let rules_str = args.rules.as_ref().map(|p| p.display().to_string());
         let manifest = build_manifest_from_scan(
             &report,
             &args.case_id,

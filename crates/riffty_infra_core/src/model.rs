@@ -72,7 +72,9 @@ impl ObservedMetrics {
             return Some(rate);
         }
         match (self.errors_total, self.requests_total) {
-            (Some(errors), Some(total)) if total > 0 => Some((errors as f64 / total as f64) * 100.0),
+            (Some(errors), Some(total)) if total > 0 => {
+                Some((errors as f64 / total as f64) * 100.0)
+            }
             (Some(0), Some(0)) => Some(0.0),
             _ => None,
         }

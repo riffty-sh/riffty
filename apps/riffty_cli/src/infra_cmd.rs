@@ -260,7 +260,8 @@ fn run_efficiency_analyze(args: EfficiencyAnalyzeArgs) -> Result<(), String> {
         modality = InfraModality::Connected;
     }
 
-    let use_opencost = (opencost_url.is_some() || args.opencost_snapshot.is_some()) && namespaces.is_some();
+    let use_opencost =
+        (opencost_url.is_some() || args.opencost_snapshot.is_some()) && namespaces.is_some();
     if !use_opencost {
         active_providers.push("public-pricing".to_string());
     }
@@ -328,7 +329,10 @@ fn run_efficiency_analyze(args: EfficiencyAnalyzeArgs) -> Result<(), String> {
                 (
                     opencost_adapter.attribute_detailed(&base_workload, &window)?,
                     opencost_adapter.attribute_detailed(&opt_workload, &window)?,
-                    format!("Live OpenCost /allocation/compute ({}m window)", args.window_mins.max(5)),
+                    format!(
+                        "Live OpenCost /allocation/compute ({}m window)",
+                        args.window_mins.max(5)
+                    ),
                 )
             };
 
@@ -349,7 +353,11 @@ fn run_efficiency_analyze(args: EfficiencyAnalyzeArgs) -> Result<(), String> {
         report.estimated_annual_savings = annual_savings;
         report.savings_pct = savings_pct;
         report.idle_hourly_cost = Some(base_detailed.idle_hourly_cost);
-        report.shared_hourly_cost = Some(base_detailed.shared_hourly_cost.max(opt_detailed.shared_hourly_cost));
+        report.shared_hourly_cost = Some(
+            base_detailed
+                .shared_hourly_cost
+                .max(opt_detailed.shared_hourly_cost),
+        );
         report.modality = InfraModality::Connected;
         if !report
             .active_providers
@@ -405,8 +413,8 @@ fn run_infra_providers(args: InfraProvidersArgs) -> Result<(), String> {
         }
         InfraProvidersFormat::Text => {
             println!(
-                "{:<22} {:<8} {:<6} {:<26} {:<12} {}",
-                "PROVIDER ID", "VERSION", "API", "CAPABILITIES", "HEALTH", "DETAILS"
+                "{:<22} {:<8} {:<6} {:<26} {:<12} DETAILS",
+                "PROVIDER ID", "VERSION", "API", "CAPABILITIES", "HEALTH"
             );
             println!("{}", "-".repeat(104));
             for p in &summary {

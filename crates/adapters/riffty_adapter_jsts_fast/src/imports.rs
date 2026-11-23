@@ -68,7 +68,8 @@ impl ImportManagerPort for OxcImportAdapter {
             }
         }
 
-        let insert_pos = compute_esm_import_insertion_offset(source, &parsed.program, last_import_end);
+        let insert_pos =
+            compute_esm_import_insertion_offset(source, &parsed.program, last_import_end);
 
         let mut edits = Vec::new();
         let mut already_planned: HashSet<String> = HashSet::new();

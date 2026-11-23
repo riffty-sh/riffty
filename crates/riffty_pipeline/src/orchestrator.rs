@@ -226,10 +226,8 @@ fn file_matches_extensions(path: &Path, extensions: &[&str]) -> bool {
 pub fn sanitize_diagnostic_for_source(diag: &mut Diagnostic, source: &str) {
     let max_len = source.len() as u32;
     let clamped_start = clamp_to_char_boundary(source, diag.range.start.0.min(max_len));
-    let clamped_end = clamp_to_char_boundary(
-        source,
-        diag.range.end.0.clamp(clamped_start, max_len),
-    );
+    let clamped_end =
+        clamp_to_char_boundary(source, diag.range.end.0.clamp(clamped_start, max_len));
     diag.range = TextRange::new(clamped_start, clamped_end);
 
     if let Some(ref mut fix) = diag.fix {
@@ -532,7 +530,10 @@ mod tests {
             2
         }
 
-        fn analyze_pass(&self, req: &AnalyzePassRequest<'_>) -> Result<AnalyzePassResponse, String> {
+        fn analyze_pass(
+            &self,
+            req: &AnalyzePassRequest<'_>,
+        ) -> Result<AnalyzePassResponse, String> {
             let mut diags = Vec::new();
             for wf in req.files {
                 if let Some(pos) = wf.source.find("new BigDecimal(0.1)") {
@@ -617,7 +618,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(out.files.len(), 1);
-        assert_eq!(out.files[0].final_source, "var x = BigDecimal.valueOf(0.1);\n");
+        assert_eq!(
+            out.files[0].final_source,
+            "var x = BigDecimal.valueOf(0.1);\n"
+        );
         assert!(out.files[0].modified);
         assert_eq!(out.provenance.len(), 1);
         assert_eq!(out.provenance[0].language, Language::Java);

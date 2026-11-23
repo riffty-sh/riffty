@@ -84,5 +84,9 @@ pub fn excerpt(text: &str, max_bytes: usize) -> String {
     while end > 0 && !text.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}...\n[truncated {} bytes]", &text[..end], text.len() - end)
+    format!(
+        "{}...\n[truncated {} bytes]",
+        &text[..end],
+        text.len() - end
+    )
 }

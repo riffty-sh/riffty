@@ -139,9 +139,6 @@ ok 3 - legacy mode # SKIP not enabled
             parsed.cases.get("deepClone handles circular ref"),
             Some(&TestOutcome::Fail)
         );
-        assert_eq!(
-            parsed.cases.get("legacy mode"),
-            Some(&TestOutcome::Skipped)
-        );
+        assert_eq!(parsed.cases.get("legacy mode"), Some(&TestOutcome::Skipped));
     }
 }

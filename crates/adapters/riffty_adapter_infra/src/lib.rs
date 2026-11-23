@@ -59,7 +59,8 @@ pub fn default_infra_registry() -> InfraPluginRegistry {
             api_compat: "1.x".to_string(),
             capabilities: vec![InfraCapability::Pricing],
             requires_external_infra: false,
-            description: "Normalized public cloud compute reference pricing (Estimated)".to_string(),
+            description: "Normalized public cloud compute reference pricing (Estimated)"
+                .to_string(),
         },
         InfraPluginHealth::Healthy,
     );

@@ -707,7 +707,10 @@ class BillingService {
 "#;
         let diags = analyze_java_source(FileId(1), src);
         let ids: Vec<&str> = diags.iter().map(|d| d.rule_id.as_str()).collect();
-        assert_eq!(ids, vec!["JAVA-BIGDEC-001", "JAVA-BOX-001", "JAVA-STREAM-001"]);
+        assert_eq!(
+            ids,
+            vec!["JAVA-BIGDEC-001", "JAVA-BOX-001", "JAVA-STREAM-001"]
+        );
 
         assert_eq!(
             diags[0].fix.as_ref().unwrap().edits[0].replacement,
@@ -770,4 +773,3 @@ class OrderController {
         );
     }
 }
-

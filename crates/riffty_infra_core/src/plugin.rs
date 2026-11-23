@@ -129,7 +129,11 @@ impl InfraPluginRegistry {
         health: InfraPluginHealth,
     ) -> Result<(), String> {
         Self::validate_api_compat(&descriptor.api_compat)?;
-        if self.plugins.iter().any(|p| p.descriptor.id == descriptor.id) {
+        if self
+            .plugins
+            .iter()
+            .any(|p| p.descriptor.id == descriptor.id)
+        {
             return Err(format!("duplicate infra plugin id '{}'", descriptor.id));
         }
 
@@ -190,7 +194,11 @@ impl InfraPluginRegistry {
                     .capabilities
                     .iter()
                     .copied()
-                    .filter(|cap| self.active.get(cap).is_some_and(|id| id == &entry.descriptor.id))
+                    .filter(|cap| {
+                        self.active
+                            .get(cap)
+                            .is_some_and(|id| id == &entry.descriptor.id)
+                    })
                     .collect();
                 active_for.sort_by_key(|c| c.as_str());
 

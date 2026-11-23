@@ -161,12 +161,22 @@ fn collect_workspace_dts(dir: &Path, out: &mut Vec<PathBuf>) {
         if path.is_dir() {
             if matches!(
                 name_str.as_ref(),
-                "node_modules" | ".git" | ".riffty" | "dist" | "build" | ".next" | "target" | ".turbo"
+                "node_modules"
+                    | ".git"
+                    | ".riffty"
+                    | "dist"
+                    | "build"
+                    | ".next"
+                    | "target"
+                    | ".turbo"
             ) {
                 continue;
             }
             collect_workspace_dts(&path, out);
-        } else if name_str.ends_with(".d.ts") || name_str.ends_with(".d.mts") || name_str.ends_with(".d.cts") {
+        } else if name_str.ends_with(".d.ts")
+            || name_str.ends_with(".d.mts")
+            || name_str.ends_with(".d.cts")
+        {
             out.push(path);
         }
     }

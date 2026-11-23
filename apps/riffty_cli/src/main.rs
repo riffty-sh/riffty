@@ -14,8 +14,8 @@ use riffty_adapter_fs::{FsWorkspaceAdapter, WorkspaceResolver};
 use riffty_adapter_java_fast::JavaFastAnalyzer;
 use riffty_adapter_plugin::{JavaPluginAdapter, discover_java_sidecar_bundle};
 use riffty_adapter_refaster::{JavaRefasterAnalyzer, RefasterYamlRule};
-use riffty_adapter_tsrs::TsrsSemanticAnalyzer;
 use riffty_adapter_ruff_ast::{RuffAstAdapter, RuffImportAdapter};
+use riffty_adapter_tsrs::TsrsSemanticAnalyzer;
 use riffty_adapter_ty::{NullTypeOracle, TyOracleAdapter};
 use riffty_core::{
     AnalysisProvenance, AnalysisTier, ByteOffset, DiffTarget, FileId, GitDiffPort, Language,

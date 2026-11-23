@@ -12,7 +12,9 @@
 plugins/riffty-java/build/
 
 
-# Generated jlink runtime and Leyden AOT cache
+# Generated Java sidecar jar, jlink runtime and Leyden AOT cache
+plugins/riffty-java/dist/riffty-java-runner.jar
+plugins/riffty-java/dist/riffty-java.sha256
 plugins/riffty-java/dist/runtime/
 plugins/riffty-java/dist/*.aot
 plugins/riffty-java/dist/*.aot.sha256

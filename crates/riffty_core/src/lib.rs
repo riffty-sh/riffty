@@ -16,14 +16,19 @@ pub use ports::{
 pub enum Language {
     Python,
     Java,
-    #[serde(rename = "jsts", alias = "js", alias = "ts", alias = "javascript", alias = "typescript")]
+    #[serde(
+        rename = "jsts",
+        alias = "js",
+        alias = "ts",
+        alias = "javascript",
+        alias = "typescript"
+    )]
     JsTs,
 }
 
 impl Language {
-    pub const JSTS_EXTENSIONS: &'static [&'static str] = &[
-        "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs",
-    ];
+    pub const JSTS_EXTENSIONS: &'static [&'static str] =
+        &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
 
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -102,9 +107,7 @@ impl LineIndex {
             .copied()
             .unwrap_or(0) as usize;
         let end = (offset.0 as usize).min(source.len());
-        if line_start <= end
-            && source.is_char_boundary(line_start)
-            && source.is_char_boundary(end)
+        if line_start <= end && source.is_char_boundary(line_start) && source.is_char_boundary(end)
         {
             (source[line_start..end].chars().count() as u32) + 1
         } else {
@@ -2220,16 +2223,16 @@ mod tests {
     #[test]
     fn req_m0_01_language_jsts_str_serde_and_extensions() {
         assert_eq!(Language::JsTs.as_str(), "jsts");
-        assert_eq!(
-            serde_json::to_string(&Language::JsTs).unwrap(),
-            "\"jsts\""
-        );
+        assert_eq!(serde_json::to_string(&Language::JsTs).unwrap(), "\"jsts\"");
         assert_eq!(
             serde_json::from_str::<Language>("\"jsts\"").unwrap(),
             Language::JsTs
         );
 
-        for ext in ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "TS", "TSX", "MTS", "CTS", "JS", "JSX", "MJS", "CJS"] {
+        for ext in [
+            "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "TS", "TSX", "MTS", "CTS", "JS",
+            "JSX", "MJS", "CJS",
+        ] {
             assert_eq!(
                 Language::from_extension(ext),
                 Some(Language::JsTs),

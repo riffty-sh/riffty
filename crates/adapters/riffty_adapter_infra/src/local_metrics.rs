@@ -81,7 +81,8 @@ fn parse_json_value(value: &Value, side: Option<&str>) -> Result<ObservedMetrics
 
     // Case 2: Track B1/B2/B3 `01_before_after_http.json` (`{ "baseline": { "http": ... }, "fixed": { "http": ... } }`)
     let target_key = canonical_side(side);
-    if obj.contains_key("baseline") && (obj.contains_key("fixed") || obj.contains_key("optimized")) {
+    if obj.contains_key("baseline") && (obj.contains_key("fixed") || obj.contains_key("optimized"))
+    {
         let side_val = obj
             .get(target_key)
             .or_else(|| {
@@ -179,12 +180,13 @@ fn parse_track_side_object(side_val: &Value) -> Result<ObservedMetrics, String> 
         .and_then(|p| p.get("rss_mb_avg").and_then(Value::as_f64))
         .or_else(|| obj.get("memory_mib_avg").and_then(Value::as_f64));
 
-    let cpu_us_per_req = obj.get("cpu_us_per_req").and_then(Value::as_f64).or_else(|| {
-        match (cpu_millicores_avg, rps) {
+    let cpu_us_per_req = obj
+        .get("cpu_us_per_req")
+        .and_then(Value::as_f64)
+        .or_else(|| match (cpu_millicores_avg, rps) {
             (Some(mc), Some(r)) if r > 0.0 => Some((mc * 1000.0) / r),
             _ => None,
-        }
-    });
+        });
 
     Ok(ObservedMetrics {
         rps,
@@ -270,13 +272,11 @@ fn parse_jsonl_records(raw: &str, side: Option<&str>) -> Result<ObservedMetrics,
             _ => obj.get("cpu_millicores_avg").and_then(Value::as_f64),
         };
 
-        let gc_pause_ms_per_1k_req = match (
-            obj.get("gc_time_ms").and_then(Value::as_f64),
-            total_ops,
-        ) {
-            (Some(gc_ms), Some(ops)) if ops > 0 => Some(gc_ms / (ops as f64 / 1000.0)),
-            _ => None,
-        };
+        let gc_pause_ms_per_1k_req =
+            match (obj.get("gc_time_ms").and_then(Value::as_f64), total_ops) {
+                (Some(gc_ms), Some(ops)) if ops > 0 => Some(gc_ms / (ops as f64 / 1000.0)),
+                _ => None,
+            };
 
         let error_rate_pct = match (failed_ops, total_ops) {
             (Some(e), Some(t)) if t > 0 => Some((e as f64 / t as f64) * 100.0),

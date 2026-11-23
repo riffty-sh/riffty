@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::time::Duration;
 
 use riffty_infra_core::{
     CostAttribution, CostKind, CostProviderPort, InfraPluginHealth, MeasurementWindow,
@@ -29,12 +29,37 @@ pub struct OpenCostDetailedAllocation {
 #[derive(Debug, Clone)]
 pub struct OpenCostCostAdapter {
     pub base_url: String,
+    pub bearer_token: Option<String>,
 }
 
 impl OpenCostCostAdapter {
     pub fn new(base_url: impl Into<String>) -> Self {
         let trimmed = base_url.into().trim().trim_end_matches('/').to_string();
-        Self { base_url: trimmed }
+        let bearer_token = std::env::var("OPENCOST_BEARER_TOKEN")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        Self {
+            base_url: trimmed,
+            bearer_token,
+        }
+    }
+
+    pub fn with_bearer_token(mut self, token: impl Into<String>) -> Self {
+        let trimmed = token.into().trim().to_string();
+        self.bearer_token = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        };
+        self
+    }
+
+    fn http_agent(timeout_secs: u64) -> ureq::Agent {
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(timeout_secs)))
+            .build()
+            .into()
     }
 
     /// Probes OpenCost availability via `/healthz`.
@@ -43,21 +68,21 @@ impl OpenCostCostAdapter {
             return InfraPluginHealth::Unavailable("OPENCOST_URL not configured".to_string());
         }
 
+        let agent = Self::http_agent(2);
         let health_url = format!("{}/healthz", self.base_url);
-        match Command::new("curl")
-            .args(["-sf", "--max-time", "2", &health_url])
-            .output()
-        {
-            Ok(out) if out.status.success() => InfraPluginHealth::Healthy,
-            Ok(_) => InfraPluginHealth::Degraded(format!(
-                "OpenCost endpoint '{}' unreachable or returned non-200",
-                self.base_url
-            )),
+        let mut req = agent.get(&health_url);
+        if let Some(ref tok) = self.bearer_token {
+            req = req.header("Authorization", &format!("Bearer {tok}"));
+        }
+        match req.call() {
+            Ok(_) => InfraPluginHealth::Healthy,
             Err(e) => InfraPluginHealth::Degraded(format!(
-                "failed to invoke curl for OpenCost health check: {e}"
+                "OpenCost endpoint '{}' unreachable or returned error: {e}",
+                self.base_url
             )),
         }
     }
+
     /// Queries live OpenCost `/allocation/compute` and returns detailed namespace attribution
     /// separated from cluster idle (`__idle__`) and shared (`__shared__` / `sharedCost`) costs.
     pub fn attribute_detailed(
@@ -67,40 +92,27 @@ impl OpenCostCostAdapter {
     ) -> Result<OpenCostDetailedAllocation, String> {
         let ns = workload.namespace.as_deref().unwrap_or(&workload.name);
         let mins = ((window.duration_secs / 60.0).round() as u64).max(5);
-        let window_arg = format!("window={mins}m");
+        let window_val = format!("{mins}m");
         let alloc_url = format!("{}/allocation/compute", self.base_url);
 
-        let out = Command::new("curl")
-            .args([
-                "-sfG",
-                "--max-time",
-                "10",
-                "--data-urlencode",
-                &window_arg,
-                "--data-urlencode",
-                "resolution=1m",
-                "--data-urlencode",
-                "aggregate=namespace",
-                "--data-urlencode",
-                "includeIdle=true",
-                &alloc_url,
-            ])
-            .output()
-            .map_err(|e| format!("failed to execute curl against OpenCost '{alloc_url}': {e}"))?;
-
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            return Err(format!(
-                "OpenCost allocation query failed ({alloc_url}): {}",
-                if stderr.is_empty() {
-                    format!("exit status {}", out.status)
-                } else {
-                    stderr
-                }
-            ));
+        let agent = Self::http_agent(10);
+        let mut req = agent
+            .get(&alloc_url)
+            .query("window", &window_val)
+            .query("resolution", "1m")
+            .query("aggregate", "namespace")
+            .query("includeIdle", "true");
+        if let Some(ref tok) = self.bearer_token {
+            req = req.header("Authorization", &format!("Bearer {tok}"));
         }
 
-        let body = String::from_utf8(out.stdout)
+        let mut resp = req
+            .call()
+            .map_err(|e| format!("OpenCost allocation query failed ({alloc_url}): {e}"))?;
+
+        let body = resp
+            .body_mut()
+            .read_to_string()
             .map_err(|e| format!("invalid UTF-8 response from OpenCost: {e}"))?;
         parse_opencost_detailed(&body, ns)
     }

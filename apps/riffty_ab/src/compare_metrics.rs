@@ -166,7 +166,10 @@ pub fn render_multi_metric_md(report: &MultiMetricAbReport) -> String {
         "# `riffty-ab` Multi-Metric A/B Report — `{}`\n\n",
         report.case_id
     ));
-    md.push_str(&format!("- **Overall Verdict:** `{}`\n", report.overall_verdict));
+    md.push_str(&format!(
+        "- **Overall Verdict:** `{}`\n",
+        report.overall_verdict
+    ));
     md.push_str(&format!(
         "- **Execution Order:** `{}`\n",
         report.execution_order.join(", ")
@@ -175,7 +178,10 @@ pub fn render_multi_metric_md(report: &MultiMetricAbReport) -> String {
         "- **Window / Warmup:** `{}s` / `{}s`\n",
         report.window_secs, report.warmup_secs
     ));
-    md.push_str(&format!("- **Report SHA-256:** `{}`\n\n", report.report_sha256));
+    md.push_str(&format!(
+        "- **Report SHA-256:** `{}`\n\n",
+        report.report_sha256
+    ));
 
     md.push_str("## Per-Metric Comparison (Baseline A vs. Fixed B)\n\n");
     md.push_str("| Metric | Unit | Baseline Median | Fixed Median | Baseline Mean ± 95% CI | Fixed Mean ± 95% CI | Baseline p95 / p99 / max | Fixed p95 / p99 / max | Delta % | Paired Wins | Verdict |\n");
@@ -244,9 +250,8 @@ pub fn run_compare_metrics(args: CompareMetricsArgs) -> Result<MultiMetricAbRepo
         if let Some(parent) = out_json.parent()
             && !parent.as_os_str().is_empty()
         {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                format!("failed to create directory {}: {e}", parent.display())
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("failed to create directory {}: {e}", parent.display()))?;
         }
         std::fs::write(out_json, format!("{json_pretty}\n"))
             .map_err(|e| format!("failed to write {}: {e}", out_json.display()))?;
@@ -256,9 +261,8 @@ pub fn run_compare_metrics(args: CompareMetricsArgs) -> Result<MultiMetricAbRepo
         if let Some(parent) = out_md.parent()
             && !parent.as_os_str().is_empty()
         {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                format!("failed to create directory {}: {e}", parent.display())
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("failed to create directory {}: {e}", parent.display()))?;
         }
         std::fs::write(out_md, &md)
             .map_err(|e| format!("failed to write {}: {e}", out_md.display()))?;

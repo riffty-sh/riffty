@@ -155,8 +155,8 @@ mod tests {
 
     #[test]
     fn k8s_hpa_replica_mode_computes_provisioned_replica_savings() {
-        let workload = WorkloadReference::new("genai-gateway", "kubernetes")
-            .with_namespace("riffty-track-b1");
+        let workload =
+            WorkloadReference::new("genai-gateway", "kubernetes").with_namespace("riffty-track-b1");
         let window = MeasurementWindow {
             duration_secs: 60.0,
             samples: 12,
@@ -275,7 +275,11 @@ mod tests {
             requires_external_infra: false,
             description: "Old plugin".into(),
         };
-        assert!(registry.register(bad_plugin, InfraPluginHealth::Healthy).is_err());
+        assert!(
+            registry
+                .register(bad_plugin, InfraPluginHealth::Healthy)
+                .is_err()
+        );
 
         // Register two compatible metrics providers + one unavailable provider
         registry

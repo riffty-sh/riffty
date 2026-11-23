@@ -41,7 +41,10 @@ pub fn parse_junit_xml(xml: &str) -> Result<ParsedJunitSuite, String> {
         let tag_start = pos + rel_idx;
         let after_name = tag_start + "<testcase".len();
         if after_name < bytes.len()
-            && !matches!(bytes[after_name], b' ' | b'\t' | b'\r' | b'\n' | b'>' | b'/')
+            && !matches!(
+                bytes[after_name],
+                b' ' | b'\t' | b'\r' | b'\n' | b'>' | b'/'
+            )
         {
             pos = after_name;
             continue;
@@ -55,7 +58,8 @@ pub fn parse_junit_xml(xml: &str) -> Result<ParsedJunitSuite, String> {
         let self_closing = open_tag.ends_with("/>");
 
         let classname = extract_attr(open_tag, "classname").unwrap_or_default();
-        let name = extract_attr(open_tag, "name").unwrap_or_else(|| format!("unnamed_{}", suite.total + 1));
+        let name = extract_attr(open_tag, "name")
+            .unwrap_or_else(|| format!("unnamed_{}", suite.total + 1));
         let key = if classname.is_empty() {
             name
         } else {

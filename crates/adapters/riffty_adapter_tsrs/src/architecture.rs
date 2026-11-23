@@ -9,9 +9,7 @@ use oxc_ast::ast::{
 use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
 use riffty_adapter_jsts_fast::source_type_for_path;
-use riffty_core::{
-    Applicability, Diagnostic, Fix, LineIndex, Severity, TextRange, WorkspaceFile,
-};
+use riffty_core::{Applicability, Diagnostic, Fix, LineIndex, Severity, TextRange, WorkspaceFile};
 use serde::{Deserialize, Serialize};
 
 fn default_arch_rule_id() -> String {

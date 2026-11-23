@@ -188,14 +188,20 @@ fn run_verify_report(args: VerifyReportArgs) -> ExitCode {
     let raw = match std::fs::read_to_string(&args.report) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("riffty-ab verify-report error: failed to read {}: {e}", args.report.display());
+            eprintln!(
+                "riffty-ab verify-report error: failed to read {}: {e}",
+                args.report.display()
+            );
             return ExitCode::from(2);
         }
     };
     let report: AbReport = match serde_json::from_str(&raw) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("riffty-ab verify-report error: invalid JSON in {}: {e}", args.report.display());
+            eprintln!(
+                "riffty-ab verify-report error: invalid JSON in {}: {e}",
+                args.report.display()
+            );
             return ExitCode::from(2);
         }
     };
@@ -290,7 +296,9 @@ fn run_attest(args: AttestArgs) -> ExitCode {
         eprintln!(
             "VERDICT: {} ({})",
             Verdict::RejectedTampered,
-            att.failure_reason.as_deref().unwrap_or("attestation failed")
+            att.failure_reason
+                .as_deref()
+                .unwrap_or("attestation failed")
         );
     }
 
@@ -347,7 +355,10 @@ fn run_ab_command(args: RunArgs) -> ExitCode {
             println!("  repo:     {} @ {}", summary.repo_url, summary.commit_sha);
             println!("  dirty_ok: {}", summary.allow_dirty_baseline);
             println!("  targets:  {}", summary.target_paths.join(", "));
-            println!("  test:     {} ({})", summary.test_command, summary.test_parser);
+            println!(
+                "  test:     {} ({})",
+                summary.test_command, summary.test_parser
+            );
             if !summary.vendored_target_warnings.is_empty() {
                 for w in &summary.vendored_target_warnings {
                     println!("  WARNING (vendored/generated): {} ({})", w.path, w.reason);

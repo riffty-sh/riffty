@@ -2,16 +2,24 @@
 name = "riffty_conformance"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish = false
 
 [dev-dependencies]
+riffty_ab_core.workspace = true
 riffty_adapter_ast_grep.workspace = true
 riffty_adapter_fs.workspace = true
+riffty_adapter_infra.workspace = true
+riffty_adapter_java_fast.workspace = true
+riffty_adapter_jsts_fast.workspace = true
+riffty_adapter_plugin.workspace = true
 riffty_adapter_refaster.workspace = true
 riffty_adapter_ruff_ast.workspace = true
+riffty_adapter_tsrs.workspace = true
 riffty_adapter_ty.workspace = true
 riffty_core.workspace = true
+riffty_infra_core.workspace = true
 riffty_pipeline.workspace = true
 riffty_rules_builtin.workspace = true
 serde_json.workspace = true

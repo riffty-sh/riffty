@@ -38,8 +38,7 @@ impl EfficiencyAnalyzer {
             input.pricing.provider, input.pricing.region, input.pricing.billing_model
         );
 
-        let has_hpa_data =
-            baseline.avg_replicas.is_some() && optimized.avg_replicas.is_some();
+        let has_hpa_data = baseline.avg_replicas.is_some() && optimized.avg_replicas.is_some();
 
         let (baseline_cost, optimized_cost) = if has_hpa_data {
             let pod_spec = input.pod_spec.unwrap_or_else(|| {
@@ -72,18 +71,8 @@ impl EfficiencyAnalyzer {
             let opt_replicas = optimized.avg_replicas.unwrap_or(0.0);
 
             (
-                hpa_cost_attribution(
-                    base_replicas,
-                    pod_spec,
-                    &input.pricing,
-                    &pricing_source,
-                ),
-                hpa_cost_attribution(
-                    opt_replicas,
-                    pod_spec,
-                    &input.pricing,
-                    &pricing_source,
-                ),
+                hpa_cost_attribution(base_replicas, pod_spec, &input.pricing, &pricing_source),
+                hpa_cost_attribution(opt_replicas, pod_spec, &input.pricing, &pricing_source),
             )
         } else {
             let target_rps = input

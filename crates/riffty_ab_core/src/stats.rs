@@ -61,7 +61,7 @@ pub fn compute_stats(samples: &[f64]) -> Result<SampleStats, String> {
     let n = sorted.len();
     let min = sorted[0];
     let max = sorted[n - 1];
-    let median = if n.is_multiple_of(2) {
+    let median = if n % 2 == 0 {
         (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
     } else {
         sorted[n / 2]
@@ -131,13 +131,7 @@ pub fn compute_perf_comparison(
     let paired_wins = samples_a
         .iter()
         .zip(samples_b.iter())
-        .filter(|(a, b)| {
-            if higher_is_better {
-                b > a
-            } else {
-                b < a
-            }
-        })
+        .filter(|(a, b)| if higher_is_better { b > a } else { b < a })
         .count();
 
     let median_improved = if higher_is_better {
@@ -196,11 +190,7 @@ pub fn extract_metric_value(
         && !pattern.trim().is_empty()
     {
         // Support literal prefix like "ops/s:" or regex-like "ops/s:\\s*([0-9.]+)"
-        let anchor = pattern
-            .split(['(', '\\'])
-            .next()
-            .unwrap_or(pattern)
-            .trim();
+        let anchor = pattern.split(['(', '\\']).next().unwrap_or(pattern).trim();
         for line in stdout.lines() {
             if let Some(idx) = line.find(anchor) {
                 let after = &line[idx + anchor.len()..];
@@ -230,8 +220,7 @@ fn parse_first_f64(s: &str) -> Option<f64> {
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
-        if b.is_ascii_digit()
-            || (b == b'-' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit())
+        if b.is_ascii_digit() || (b == b'-' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit())
         {
             let start = i;
             i += 1;

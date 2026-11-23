@@ -7,8 +7,8 @@ cd "$SCRIPT_DIR"
 mkdir -p dist
 
 if command -v mvn >/dev/null 2>&1 && [[ -f pom.xml ]]; then
-  echo "Building shaded riffty-java-runner.jar with Error Prone + Picnic via Maven..."
-  mvn -q -DskipTests package
+  echo "Building and testing shaded riffty-java-runner.jar with Error Prone + Picnic via Maven..."
+  mvn -q package
 else
   echo "ERROR: mvn not found; cannot build shaded Error Prone + Picnic runner" >&2
   exit 1

@@ -4,8 +4,8 @@ use std::process::Command;
 use riffty_adapter_fs::WorkspaceResolver;
 use riffty_adapter_java_fast::{RuleDoc, java_fast_rule_catalog};
 use riffty_adapter_jsts_fast::jsts_fast_rule_catalog;
-use riffty_adapter_tsrs::jsts_tier2_rule_catalog;
 use riffty_adapter_plugin::{discover_java_sidecar_bundle, verify_jar_sha256};
+use riffty_adapter_tsrs::jsts_tier2_rule_catalog;
 use riffty_core::{Language, Severity};
 use serde::Serialize;
 
@@ -316,11 +316,7 @@ pub fn run_doctor(target_path: &Path, json_output: bool) -> Result<(), String> {
     println!("JS/TS Tier 2:     {}", report.jsts.tier2);
     println!(
         "JS/TS tsconfig:   {}",
-        report
-            .jsts
-            .tsconfig_path
-            .as_deref()
-            .unwrap_or("not found")
+        report.jsts.tsconfig_path.as_deref().unwrap_or("not found")
     );
     println!(
         "JS/TS node_mods:  {} (read-only check; zero Node.js/npm execution)",
@@ -361,7 +357,11 @@ mod tests {
         let nested = root.join("packages/web/src");
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::create_dir_all(root.join("node_modules/typescript")).unwrap();
-        std::fs::write(root.join("pnpm-workspace.yaml"), "packages:\n  - packages/*\n").unwrap();
+        std::fs::write(
+            root.join("pnpm-workspace.yaml"),
+            "packages:\n  - packages/*\n",
+        )
+        .unwrap();
         std::fs::write(root.join("packages/web/tsconfig.json"), "{}\n").unwrap();
         let target = nested.join("app.ts");
         std::fs::write(&target, "export const n = 1;\n").unwrap();
@@ -371,7 +371,11 @@ mod tests {
         assert_eq!(report.jsts.workspace_root, root.display().to_string());
         assert_eq!(
             report.jsts.tsconfig_path.as_deref(),
-            Some(root.join("packages/web/tsconfig.json").to_string_lossy().as_ref())
+            Some(
+                root.join("packages/web/tsconfig.json")
+                    .to_string_lossy()
+                    .as_ref()
+            )
         );
         assert!(report.jsts.node_modules_present);
         assert!(report.jsts.zero_node_execution);
@@ -380,7 +384,12 @@ mod tests {
         let json = serde_json::to_value(&report).unwrap();
         assert_eq!(json["jsts"]["node_modules_present"], true);
         assert_eq!(json["jsts"]["zero_node_execution"], true);
-        assert!(json["jsts"]["tsconfig_path"].as_str().unwrap().ends_with("tsconfig.json"));
+        assert!(
+            json["jsts"]["tsconfig_path"]
+                .as_str()
+                .unwrap()
+                .ends_with("tsconfig.json")
+        );
 
         // Text + JSON run_doctor both succeed
         run_doctor(&target, false).expect("text doctor ok");
@@ -389,4 +398,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
-

@@ -298,9 +298,7 @@ impl AbManifest {
                 .unwrap_or("")
                 .is_empty()
         {
-            errors.push(
-                "test.report_path is required when test.parser = 'junit_xml'".to_string(),
-            );
+            errors.push("test.report_path is required when test.parser = 'junit_xml'".to_string());
         }
 
         if self.perf.enabled {
@@ -308,7 +306,8 @@ impl AbManifest {
                 errors.push("perf.command must not be empty when perf.enabled = true".to_string());
             }
             if self.perf.measured_pairs == 0 {
-                errors.push("perf.measured_pairs must be >= 1 when perf.enabled = true".to_string());
+                errors
+                    .push("perf.measured_pairs must be >= 1 when perf.enabled = true".to_string());
             }
             if self.perf.timeout_secs == 0 {
                 errors.push("perf.timeout_secs must be > 0 when perf.enabled = true".to_string());
@@ -415,7 +414,10 @@ command = "pytest"
 "#
         );
         let err = AbManifest::from_toml_str(&toml_str).unwrap_err();
-        assert!(err.contains("allow_dirty_baseline = true is forbidden"), "got: {err}");
+        assert!(
+            err.contains("allow_dirty_baseline = true is forbidden"),
+            "got: {err}"
+        );
     }
 
     #[test]

@@ -82,4 +82,3 @@ fn sarif_level(severity: &str) -> &'static str {
         _ => "note",
     }
 }
-

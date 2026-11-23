@@ -317,7 +317,11 @@ fn parse_pom_dependencies(xml: &str) -> Vec<(String, String, String)> {
             cursor = &cursor[lt + 1..];
             let Some(gt) = cursor.find('>') else { break };
             let tag = cursor[..gt].trim();
-            if tag.is_empty() || tag.starts_with('/') || tag.starts_with('!') || tag.starts_with('?') {
+            if tag.is_empty()
+                || tag.starts_with('/')
+                || tag.starts_with('!')
+                || tag.starts_with('?')
+            {
                 cursor = &cursor[gt + 1..];
                 continue;
             }
@@ -729,8 +733,11 @@ mod tests {
     fn sha256_verification_rejects_tampered_jar() {
         let tmp = std::env::temp_dir().join("riffty_sha256_tamper_test.jar");
         fs::write(&tmp, b"tampered jar bytes").unwrap();
-        let err = verify_jar_sha256(&tmp, "0000000000000000000000000000000000000000000000000000000000000000")
-            .unwrap_err();
+        let err = verify_jar_sha256(
+            &tmp,
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap_err();
         assert!(err.contains("SHA-256 mismatch"), "err: {err}");
         let _ = fs::remove_file(&tmp);
     }
@@ -786,7 +793,11 @@ class BillingService {
             .expect("Tier 2 javac sidecar should succeed");
 
         assert_eq!(resp.provenance.tier, AnalysisTier::Tier2Semantic);
-        let ids: Vec<&str> = resp.diagnostics.iter().map(|d| d.rule_id.as_str()).collect();
+        let ids: Vec<&str> = resp
+            .diagnostics
+            .iter()
+            .map(|d| d.rule_id.as_str())
+            .collect();
         assert!(ids.contains(&"ARCH-DOMAIN-001"), "ids: {ids:?}");
         assert!(ids.contains(&"JAVA-BIGDEC-001"), "ids: {ids:?}");
         assert!(ids.contains(&"JAVA-OBJMAP-001"), "ids: {ids:?}");
@@ -796,7 +807,10 @@ class BillingService {
             .iter()
             .find(|d| d.rule_id == "JAVA-OBJMAP-001")
             .unwrap();
-        assert_eq!(objmap.fix.as_ref().unwrap().applicability, Applicability::Safe);
+        assert_eq!(
+            objmap.fix.as_ref().unwrap().applicability,
+            Applicability::Safe
+        );
         assert_eq!(objmap.fix.as_ref().unwrap().edits.len(), 2);
     }
 
@@ -839,7 +853,11 @@ class BadKey {
                 pass_index: 0,
             })
             .expect("Error Prone Tier 2 pass should succeed");
-        let ids: Vec<&str> = resp.diagnostics.iter().map(|d| d.rule_id.as_str()).collect();
+        let ids: Vec<&str> = resp
+            .diagnostics
+            .iter()
+            .map(|d| d.rule_id.as_str())
+            .collect();
         assert!(
             ids.contains(&"EP-EqualsHashCode") || ids.contains(&"EP-SelfEquals"),
             "Expected Error Prone diagnostic (EP-EqualsHashCode / EP-SelfEquals), got: {ids:?} (detail={:?})",
@@ -877,7 +895,8 @@ class BadKey {
             )]
         );
 
-        let lock = "# Gradle lockfile\ncom.google.guava:guava:33.3.1-jre=compileClasspath\nempty=\n";
+        let lock =
+            "# Gradle lockfile\ncom.google.guava:guava:33.3.1-jre=compileClasspath\nempty=\n";
         let gdeps = parse_gradle_lockfile(lock);
         assert_eq!(
             gdeps,
@@ -968,7 +987,10 @@ class TokenValidator {
         let mut edits = fix_1.edits.clone();
         edits.sort_by_key(|e| std::cmp::Reverse(e.range.start));
         for e in edits {
-            patched.replace_range(e.range.start.0 as usize..e.range.end.0 as usize, &e.replacement);
+            patched.replace_range(
+                e.range.start.0 as usize..e.range.end.0 as usize,
+                &e.replacement,
+            );
         }
         assert!(
             patched.contains("private static final Pattern RIFFTY_PATTERN_1 = Pattern.compile(\"^[a-zA-Z0-9_-]{1,64}$\");"),
@@ -989,16 +1011,17 @@ class TokenValidator {
         let fix_2 = chained_2.fix.as_ref().expect("fix expected");
         assert_eq!(fix_2.applicability, Applicability::Safe);
         assert!(
-            fix_2.edits.iter().any(|e| e.replacement == "RIFFTY_PATTERN_2"),
+            fix_2
+                .edits
+                .iter()
+                .any(|e| e.replacement == "RIFFTY_PATTERN_2"),
             "Expected distinct field name RIFFTY_PATTERN_2, got: {:?}",
             fix_2.edits
         );
 
         let dynamic = regex_diags
             .iter()
-            .find(|d| {
-                src[d.range.start.0 as usize..d.range.end.0 as usize].contains("userRegex")
-            })
+            .find(|d| src[d.range.start.0 as usize..d.range.end.0 as usize].contains("userRegex"))
             .expect("Expected JAVA-REGEX-001 for dynamic Pattern.compile");
         let dynamic_fix = dynamic.fix.as_ref().expect("fix expected");
         assert_eq!(dynamic_fix.applicability, Applicability::ManualOnly);
@@ -1078,9 +1101,7 @@ class SizeValidator {
 
         let replace_all = diags
             .iter()
-            .find(|d| {
-                src[d.range.start.0 as usize..d.range.end.0 as usize].contains("[GMK]B$")
-            })
+            .find(|d| src[d.range.start.0 as usize..d.range.end.0 as usize].contains("[GMK]B$"))
             .expect("Expected JAVA-REGEX-002 for String.replaceAll");
         let fix = replace_all.fix.as_ref().expect("fix expected");
         assert_eq!(fix.applicability, Applicability::Safe);
@@ -1088,14 +1109,19 @@ class SizeValidator {
         let mut edits = fix.edits.clone();
         edits.sort_by_key(|e| std::cmp::Reverse(e.range.start));
         for e in edits {
-            patched.replace_range(e.range.start.0 as usize..e.range.end.0 as usize, &e.replacement);
+            patched.replace_range(
+                e.range.start.0 as usize..e.range.end.0 as usize,
+                &e.replacement,
+            );
         }
         assert!(
             patched.contains("import java.util.regex.Pattern;"),
             "Expected Pattern import:\n{patched}"
         );
         assert!(
-            patched.contains("private static final Pattern RIFFTY_PATTERN_1 = Pattern.compile(\"[GMK]B$\");"),
+            patched.contains(
+                "private static final Pattern RIFFTY_PATTERN_1 = Pattern.compile(\"[GMK]B$\");"
+            ),
             "Expected hoisted Pattern field:\n{patched}"
         );
         assert!(
@@ -1105,9 +1131,7 @@ class SizeValidator {
 
         let dynamic = diags
             .iter()
-            .find(|d| {
-                src[d.range.start.0 as usize..d.range.end.0 as usize].contains("userRegex")
-            })
+            .find(|d| src[d.range.start.0 as usize..d.range.end.0 as usize].contains("userRegex"))
             .expect("Expected JAVA-REGEX-002 ManualOnly for dynamic regex in loop");
         assert_eq!(
             dynamic.fix.as_ref().unwrap().applicability,
@@ -1115,4 +1139,3 @@ class SizeValidator {
         );
     }
 }
-

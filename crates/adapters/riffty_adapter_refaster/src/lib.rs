@@ -384,8 +384,12 @@ impl LanguageAnalyzerPort for JavaRefasterAnalyzer {
                 continue;
             }
             files_analyzed += 1;
-            let mut diags =
-                evaluate_java_refaster_rules(wf.file_id, &wf.relative_path, &wf.source, &self.rules);
+            let mut diags = evaluate_java_refaster_rules(
+                wf.file_id,
+                &wf.relative_path,
+                &wf.source,
+                &self.rules,
+            );
             if let Some(scopes) = req.scoped_ranges {
                 let allowed = scopes.get(&wf.file_id).map(Vec::as_slice).unwrap_or(&[]);
                 diags.retain(|d| allowed.iter().any(|sp| sp.intersects(d.range)));
@@ -428,7 +432,11 @@ impl TypeOraclePort for NoOpTypeOracle {
     fn is_subtype(&self, _sub: &CanonicalType, _sup: &CanonicalType) -> TriState {
         TriState::Unknown
     }
-    fn reverse_dependents(&self, _file: FileId, _changed: &[TextRange]) -> Vec<(FileId, TextRange)> {
+    fn reverse_dependents(
+        &self,
+        _file: FileId,
+        _changed: &[TextRange],
+    ) -> Vec<(FileId, TextRange)> {
         Vec::new()
     }
 }
@@ -1570,7 +1578,8 @@ rules:
                 file_id: FileId(1),
                 path: PathBuf::from("src/math.ts"),
                 relative_path: "src/math.ts".to_string(),
-                source: "export function bad(x: number): boolean { return x === NaN; }\n".to_string(),
+                source: "export function bad(x: number): boolean { return x === NaN; }\n"
+                    .to_string(),
             },
             WorkspaceFile {
                 file_id: FileId(2),
@@ -1597,7 +1606,15 @@ rules:
 
         assert_eq!(out.provenance.len(), 1);
         assert_eq!(out.provenance[0].language, Language::JsTs);
-        assert!(out.files[0].final_source.contains("return Number.isNaN(x);"));
-        assert!(out.files[1].final_source.contains("<span>{Number.isNaN(n)}</span>"));
+        assert!(
+            out.files[0]
+                .final_source
+                .contains("return Number.isNaN(x);")
+        );
+        assert!(
+            out.files[1]
+                .final_source
+                .contains("<span>{Number.isNaN(n)}</span>")
+        );
     }
 }

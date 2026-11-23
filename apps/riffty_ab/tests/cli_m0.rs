@@ -43,8 +43,7 @@ fn cli_blocks_execution_without_allow_exec_and_supports_plan_only() {
         .output()
         .expect("plan-only should execute");
     assert!(plan.status.success(), "plan-only failed: {plan:?}");
-    let parsed: serde_json::Value =
-        serde_json::from_slice(&plan.stdout).expect("valid JSON plan");
+    let parsed: serde_json::Value = serde_json::from_slice(&plan.stdout).expect("valid JSON plan");
     assert_eq!(parsed["case_id"], "m0-cli-gate");
     assert_eq!(parsed["allow_dirty_baseline"], false);
 

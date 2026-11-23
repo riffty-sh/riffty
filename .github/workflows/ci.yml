@@ -19,7 +19,9 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - name: Build Java Sidecar Runner (Error Prone + Picnic)
+      - name: Check Rust Formatting Gate
+        run: cargo fmt --all -- --check
+      - name: Build & Test Java Sidecar Runner (Error Prone + Picnic)
         run: bash plugins/riffty-java/build.sh
       - name: Run Workspace Test Suite (Zero Warnings Gate)
         env:

@@ -5,9 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-pub use architecture::{
-    JsTsArchitectureForbidRule, TsPathResolver, check_jsts_architecture_rules,
-};
+pub use architecture::{JsTsArchitectureForbidRule, TsPathResolver, check_jsts_architecture_rules};
 pub use cache::{CachedFileEntry, JsTsWorkspaceCache, compute_env_fingerprint, sha256_hex};
 
 use riffty_adapter_jsts_fast::{
@@ -156,8 +154,8 @@ fn check_tier2_readiness(workspace_root: &Path, files: &[WorkspaceFile]) -> Tier
 
     // 2. Check package.json dependencies vs node_modules presence (strictly read-only, zero RCE!).
     let node_modules_dir = find_node_modules_dir(project_dir, workspace_root);
-    let has_declared_deps = package_json_declares_deps(project_dir)
-        || package_json_declares_deps(workspace_root);
+    let has_declared_deps =
+        package_json_declares_deps(project_dir) || package_json_declares_deps(workspace_root);
 
     if has_declared_deps && node_modules_dir.is_none() {
         return Tier2Readiness::Degraded {
@@ -299,11 +297,8 @@ impl LanguageAnalyzerPort for TsrsSemanticAnalyzer {
                         {
                             continue;
                         }
-                        let mut arch_diags = check_jsts_architecture_rules(
-                            wf,
-                            &self.architecture_forbid,
-                            &resolver,
-                        );
+                        let mut arch_diags =
+                            check_jsts_architecture_rules(wf, &self.architecture_forbid, &resolver);
                         if let Some(scopes) = req.scoped_ranges {
                             let allowed = scopes.get(&wf.file_id).map(Vec::as_slice).unwrap_or(&[]);
                             arch_diags.retain(|d| allowed.iter().any(|sp| sp.intersects(d.range)));
@@ -338,8 +333,11 @@ impl LanguageAnalyzerPort for TsrsSemanticAnalyzer {
             .collect();
 
         // REQ-M3-03: Content-hash keyed incremental workspace cache in `.riffty/cache/jsts-*.bin`
-        let env_fp =
-            compute_env_fingerprint(req.workspace_root, &tsconfig_path, &self.architecture_forbid);
+        let env_fp = compute_env_fingerprint(
+            req.workspace_root,
+            &tsconfig_path,
+            &self.architecture_forbid,
+        );
         let cache_path = JsTsWorkspaceCache::cache_file_path(req.workspace_root, &tsconfig_path);
         let mut cache = JsTsWorkspaceCache::load(&cache_path, &env_fp)
             .unwrap_or_else(|| JsTsWorkspaceCache::new(env_fp.clone()));
@@ -492,7 +490,13 @@ fn analyze_workspace_with_tsrs(
     all_files: &[WorkspaceFile],
     target_files: &[&WorkspaceFile],
 ) -> Result<Vec<Diagnostic>, String> {
-    let (diags, _) = run_tsrs_program(workspace_root, tsconfig_path, all_files, target_files, false)?;
+    let (diags, _) = run_tsrs_program(
+        workspace_root,
+        tsconfig_path,
+        all_files,
+        target_files,
+        false,
+    )?;
     Ok(diags)
 }
 
@@ -951,10 +955,7 @@ impl<'a> Tier2FileVisitor<'a> {
         let expr = unwrap_parens(stmt.expression);
 
         // Exempt `void expr`, `await expr`, assignments, and `.catch(...)` / `.then(a, b)`
-        if matches!(
-            expr.kind(),
-            Kind::VoidExpression | Kind::AwaitExpression
-        ) {
+        if matches!(expr.kind(), Kind::VoidExpression | Kind::AwaitExpression) {
             return;
         }
         if ast::is_assignment_expression(expr, true) {
@@ -1091,7 +1092,9 @@ impl<'a> Tier2FileVisitor<'a> {
         };
 
         let is_stateless = new_expr.arguments.as_ref().is_none_or(|args| {
-            args.nodes().iter().all(|&arg| is_tsrs_constant_literal(arg))
+            args.nodes()
+                .iter()
+                .all(|&arg| is_tsrs_constant_literal(arg))
         });
 
         let fix = if type_is_proven && is_stateless {
@@ -1099,7 +1102,9 @@ impl<'a> Tier2FileVisitor<'a> {
             let (insert_at, indent) = self.hoist_insert_offset_and_indent();
             let decl = format!("{indent}const {var_name} = {expr_src};\n");
             Fix {
-                title: format!("Hoist stateless `{ctor_name}` client to module-scope `const {var_name}`"),
+                title: format!(
+                    "Hoist stateless `{ctor_name}` client to module-scope `const {var_name}`"
+                ),
                 applicability: Applicability::Safe,
                 edits: vec![
                     Edit {
@@ -1115,7 +1120,9 @@ impl<'a> Tier2FileVisitor<'a> {
             }
         } else {
             Fix {
-                title: format!("Reuse a shared `{ctor_name}` instance instead of allocating per request"),
+                title: format!(
+                    "Reuse a shared `{ctor_name}` instance instead of allocating per request"
+                ),
                 applicability: Applicability::ManualOnly,
                 edits: Vec::new(),
                 required_imports: Vec::new(),
@@ -1441,7 +1448,10 @@ mod tests {
         // 1. Degraded: no tsconfig.json -> Tier 1 with loud degraded_reason
         let degraded_root = make_temp_ts_project(
             "degraded",
-            &[("src/app.ts", "export const nums: number[] = [10, 2];\nnums.sort();\n")],
+            &[(
+                "src/app.ts",
+                "export const nums: number[] = [10, 2];\nnums.sort();\n",
+            )],
             None,
         );
         let out_deg = run_tsrs_on_project(&degraded_root, &["src/app.ts"], false);
@@ -1453,8 +1463,14 @@ mod tests {
         let missing_nm_root = make_temp_ts_project(
             "missing_nm",
             &[
-                ("package.json", r#"{"name":"app","dependencies":{"openai":"^4.0.0"}}"#),
-                ("src/app.ts", "export const nums: number[] = [10, 2];\nnums.sort();\n"),
+                (
+                    "package.json",
+                    r#"{"name":"app","dependencies":{"openai":"^4.0.0"}}"#,
+                ),
+                (
+                    "src/app.ts",
+                    "export const nums: number[] = [10, 2];\nnums.sort();\n",
+                ),
             ],
             Some(DEFAULT_TSCONFIG),
         );
@@ -1471,7 +1487,10 @@ mod tests {
         // 3. Healthy Tier 2: tsconfig.json + standalone (no missing deps) -> tier2_semantic!
         let healthy_root = make_temp_ts_project(
             "healthy",
-            &[("src/app.ts", "export const nums: number[] = [10, 2];\nnums.sort();\n")],
+            &[(
+                "src/app.ts",
+                "export const nums: number[] = [10, 2];\nnums.sort();\n",
+            )],
             Some(DEFAULT_TSCONFIG),
         );
         let out_ok = run_tsrs_on_project(&healthy_root, &["src/app.ts"], true);
@@ -1483,7 +1502,11 @@ mod tests {
                 .unwrap()
                 .contains("tsrs (TS7 Rust)")
         );
-        assert!(out_ok.files[0].final_source.contains("nums.sort((a, b) => a - b);"));
+        assert!(
+            out_ok.files[0]
+                .final_source
+                .contains("nums.sort((a, b) => a - b);")
+        );
 
         let _ = std::fs::remove_dir_all(&degraded_root);
         let _ = std::fs::remove_dir_all(&missing_nm_root);
@@ -1554,7 +1577,11 @@ export function syncMisused(): void {
   }
 }
 "#;
-        let root = make_temp_ts_project("all_5_rules", &[("src/main.ts", src)], Some(DEFAULT_TSCONFIG));
+        let root = make_temp_ts_project(
+            "all_5_rules",
+            &[("src/main.ts", src)],
+            Some(DEFAULT_TSCONFIG),
+        );
         let out = run_tsrs_on_project(&root, &["src/main.ts"], true);
         assert_eq!(out.provenance[0].tier, AnalysisTier::Tier2Semantic);
 
@@ -1562,15 +1589,36 @@ export function syncMisused(): void {
         let fixed = &res.final_source;
 
         // 1. JSTS-NUM-SORT-001: fixed number[] and readonly number[], skipped string[], any[], unknown[]
-        assert!(fixed.contains("nums.sort((a, b) => a - b);"), "fixed:\n{fixed}");
-        assert!(fixed.contains("roNums.toSorted((a, b) => a - b);"), "fixed:\n{fixed}");
-        assert!(fixed.contains("strs.sort();"), "string[] must not be touched");
-        assert!(fixed.contains("anyArr.sort();"), "any[] must not be touched (fail-closed)");
-        assert!(fixed.contains("unkArr.sort();"), "unknown[] must not be touched (fail-closed)");
+        assert!(
+            fixed.contains("nums.sort((a, b) => a - b);"),
+            "fixed:\n{fixed}"
+        );
+        assert!(
+            fixed.contains("roNums.toSorted((a, b) => a - b);"),
+            "fixed:\n{fixed}"
+        );
+        assert!(
+            fixed.contains("strs.sort();"),
+            "string[] must not be touched"
+        );
+        assert!(
+            fixed.contains("anyArr.sort();"),
+            "any[] must not be touched (fail-closed)"
+        );
+        assert!(
+            fixed.contains("unkArr.sort();"),
+            "unknown[] must not be touched (fail-closed)"
+        );
 
         // 2. JSTS-MISUSED-PROMISE-001: async fn fixed with `await `, sync fn left as ManualOnly
-        assert!(fixed.contains("if (await fetchFlag()) {"), "fixed:\n{fixed}");
-        assert!(fixed.contains("if (maybeAsync()) {}"), "union | undefined must not be touched");
+        assert!(
+            fixed.contains("if (await fetchFlag()) {"),
+            "fixed:\n{fixed}"
+        );
+        assert!(
+            fixed.contains("if (maybeAsync()) {}"),
+            "union | undefined must not be touched"
+        );
         assert!(
             res.remaining_diagnostics
                 .iter()
@@ -1588,8 +1636,14 @@ export function syncMisused(): void {
         assert_eq!(float_count, 2, "remaining: {:?}", res.remaining_diagnostics);
 
         // 4. JSTS-SDK-CLIENT-001: stateless hoisted, request-scoped ManualOnly
-        assert!(fixed.contains("const __RIFFTY_CLIENT_1 = new OpenAI({ timeout: 5000 });"), "fixed:\n{fixed}");
-        assert!(fixed.contains("const c2 = new OpenAI({ apiKey });"), "request-scoped must not be hoisted");
+        assert!(
+            fixed.contains("const __RIFFTY_CLIENT_1 = new OpenAI({ timeout: 5000 });"),
+            "fixed:\n{fixed}"
+        );
+        assert!(
+            fixed.contains("const c2 = new OpenAI({ apiKey });"),
+            "request-scoped must not be hoisted"
+        );
         assert!(
             res.remaining_diagnostics
                 .iter()
@@ -1638,13 +1692,20 @@ export function syncMisused(): void {
                     r#"{"name":"evil","scripts":{"postinstall":"exit 99","prepare":"exit 99"}}"#,
                 ),
                 ("eslint.config.js", "process.exit(99);\n"),
-                ("src/safe.ts", "export const xs: number[] = [3, 1, 2];\nxs.sort();\n"),
+                (
+                    "src/safe.ts",
+                    "export const xs: number[] = [3, 1, 2];\nxs.sort();\n",
+                ),
             ],
             Some(DEFAULT_TSCONFIG),
         );
         let out = run_tsrs_on_project(&root, &["src/safe.ts"], true);
         assert_eq!(out.provenance[0].tier, AnalysisTier::Tier2Semantic);
-        assert!(out.files[0].final_source.contains("xs.sort((a, b) => a - b);"));
+        assert!(
+            out.files[0]
+                .final_source
+                .contains("xs.sort((a, b) => a - b);")
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1813,7 +1874,10 @@ export const ok = db;
         )
         .unwrap();
         let after_dts_edit = run_tsrs_on_project(&root, &["src/rank.ts"], false);
-        assert_eq!(after_dts_edit.provenance[0].tier, AnalysisTier::Tier2Semantic);
+        assert_eq!(
+            after_dts_edit.provenance[0].tier,
+            AnalysisTier::Tier2Semantic
+        );
         assert!(
             !after_dts_edit.provenance[0]
                 .runtime_detail

@@ -106,10 +106,7 @@ fn e2e_scan_emit_manifest_interleaved_perf_and_verify_report() {
 
     // 2. Enable interleaved perf on the discovered manifest and run full A/B
     let mut toml_str = std::fs::read_to_string(&emitted_manifest).unwrap();
-    toml_str = toml_str.replace(
-        "command = \"npm test\"",
-        "command = \"node bench.mjs\"",
-    );
+    toml_str = toml_str.replace("command = \"npm test\"", "command = \"node bench.mjs\"");
     toml_str = toml_str.replace(
         "[perf]\nenabled = false\ncommand = \"\"",
         "[perf]\nenabled = true\ncommand = \"node bench.mjs\"\nmetric_name = \"elapsed_ms\"\nmetric_json_key = \"elapsed_ms\"",

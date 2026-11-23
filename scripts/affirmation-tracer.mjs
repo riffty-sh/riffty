@@ -424,7 +424,7 @@ function auditTraceability(options = {}) {
     console.log(`\n🚨 GATE AUDIT FAILED: Requirements not satisfied. Completion blocked.`);
     process.exit(1);
   } else {
-    console.log(`\n🎉 ALL GATES VERIFIED: Affirmation matrix and GoGoslin architectural invariants 100% compliant.`);
+    console.log(`\n🎉 ALL GATES VERIFIED: Affirmation matrix and architectural invariants 100% compliant.`);
   }
 }
 

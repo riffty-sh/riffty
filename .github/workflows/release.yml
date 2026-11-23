@@ -12,8 +12,27 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  build-java-sidecar:
+    name: Build Java Tier 2 Sidecar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Build shaded riffty-java-runner.jar and SHA-256 manifest
+        run: bash plugins/riffty-java/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: java-sidecar
+          path: |
+            plugins/riffty-java/dist/riffty-java-runner.jar
+            plugins/riffty-java/dist/riffty-java.sha256
+
   build-binaries:
     name: Build (${{ matrix.target }})
+    needs: build-java-sidecar
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -32,12 +51,16 @@ jobs:
             os: windows-latest
             ext: zip
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: java-sidecar
+          path: java-sidecar
       - name: Build release binaries
-        run: cargo build --release --locked --target ${{ matrix.target }} --bin riffty --bin riffty_mcp
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin riffty --bin riffty_mcp --bin riffty-ab
       - name: Package Unix archive
         if: matrix.ext == 'tar.gz'
         shell: bash
@@ -45,6 +68,9 @@ jobs:
           mkdir -p dist staging
           cp "target/${{ matrix.target }}/release/riffty" staging/
           cp "target/${{ matrix.target }}/release/riffty_mcp" staging/
+          cp "target/${{ matrix.target }}/release/riffty-ab" staging/
+          cp java-sidecar/riffty-java-runner.jar staging/
+          cp java-sidecar/riffty-java.sha256 staging/
           cp LICENSE README.md staging/
           tar -C staging -czf "dist/riffty-${{ matrix.target }}.tar.gz" .
           if command -v sha256sum >/dev/null 2>&1; then
@@ -59,6 +85,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist, staging | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/riffty.exe" staging/
           Copy-Item "target/${{ matrix.target }}/release/riffty_mcp.exe" staging/
+          Copy-Item "target/${{ matrix.target }}/release/riffty-ab.exe" staging/
+          Copy-Item "java-sidecar/riffty-java-runner.jar" staging/
+          Copy-Item "java-sidecar/riffty-java.sha256" staging/
           Copy-Item LICENSE, README.md staging/
           Compress-Archive -Path staging/* -DestinationPath "dist/riffty-${{ matrix.target }}.zip"
           $hash = (Get-FileHash "dist/riffty-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower()
@@ -73,7 +102,7 @@ jobs:
     needs: build-binaries
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -89,4 +118,3 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') }}
-

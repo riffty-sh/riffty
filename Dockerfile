@@ -4,7 +4,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY apps ./apps
 COPY tests ./tests
-RUN cargo build --release --bin riffty --bin riffty_mcp
+RUN cargo build --release --bin riffty --bin riffty_mcp --bin riffty-ab
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
@@ -13,6 +13,7 @@ RUN apt-get update \
     && useradd --create-home --uid 10001 riffty
 COPY --from=builder /workspace/target/release/riffty /usr/local/bin/riffty
 COPY --from=builder /workspace/target/release/riffty_mcp /usr/local/bin/riffty_mcp
+COPY --from=builder /workspace/target/release/riffty-ab /usr/local/bin/riffty-ab
 COPY rules /opt/riffty/rules
 USER riffty
 WORKDIR /repo

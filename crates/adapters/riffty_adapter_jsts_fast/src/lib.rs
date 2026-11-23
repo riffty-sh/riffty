@@ -4,14 +4,14 @@ use std::path::Path;
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Argument, ArrayExpressionElement, BinaryExpression, BinaryOperator, CallExpression,
-    Expression, ForInStatement, ForOfStatement, ForStatement, Function, ArrowFunctionExpression,
-    NewExpression, ObjectPropertyKind, PropertyKey, ReturnStatement, TryStatement,
-    WhileStatement, DoWhileStatement,
+    Argument, ArrayExpressionElement, ArrowFunctionExpression, BinaryExpression, BinaryOperator,
+    CallExpression, DoWhileStatement, Expression, ForInStatement, ForOfStatement, ForStatement,
+    Function, NewExpression, ObjectPropertyKind, PropertyKey, ReturnStatement, TryStatement,
+    WhileStatement,
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
-use oxc_semantic::{Scoping, ScopeId, SemanticBuilder};
+use oxc_semantic::{ScopeId, Scoping, SemanticBuilder};
 use oxc_span::{GetSpan, SourceType};
 use riffty_adapter_refaster::{RefasterYamlRule, evaluate_jsts_refaster_rules};
 use riffty_core::{
@@ -539,8 +539,7 @@ impl<'a> JsTsTier1Visitor<'a> {
                 .all(|arg| arg.as_expression().is_some_and(is_constant_literal_expr))
         {
             let range = TextRange::new(new_expr.span.start, new_expr.span.end);
-            if let Some(expr_src) =
-                slice_span(self.source, new_expr.span.start, new_expr.span.end)
+            if let Some(expr_src) = slice_span(self.source, new_expr.span.start, new_expr.span.end)
             {
                 let var_name = self.next_hoist_name("__RIFFTY_INTL");
                 let (insert_at, indent) = self.hoist_insert_offset_and_indent();
@@ -598,7 +597,8 @@ impl<'a> JsTsTier1Visitor<'a> {
             severity: Severity::Warning,
             file_id: self.file_id,
             range: diag_range,
-            message: "Redundant `return await` outside a `try` block; return the promise directly.".to_string(),
+            message: "Redundant `return await` outside a `try` block; return the promise directly."
+                .to_string(),
             type_proof: None,
             fix: Some(Fix {
                 title: "Remove redundant `await` in `return await`".to_string(),
@@ -886,14 +886,26 @@ mod tests {
     #[test]
     fn req_m1_01_all_8_extensions_parsed_and_analyzed() {
         let samples = [
-            ("a.ts", "export const f = (x: number): boolean => x === NaN;\n"),
-            ("b.tsx", "export const V = ({ x }: { x: number }) => <div>{x === NaN}</div>;\n"),
+            (
+                "a.ts",
+                "export const f = (x: number): boolean => x === NaN;\n",
+            ),
+            (
+                "b.tsx",
+                "export const V = ({ x }: { x: number }) => <div>{x === NaN}</div>;\n",
+            ),
             ("c.mts", "export const f = (x: number) => x === NaN;\n"),
             ("d.cts", "export const f = (x: number) => x === NaN;\n"),
             ("e.js", "export const f = (x) => x === NaN;\n"),
-            ("f.jsx", "export const V = ({ x }) => <div>{x === NaN}</div>;\n"),
+            (
+                "f.jsx",
+                "export const V = ({ x }) => <div>{x === NaN}</div>;\n",
+            ),
             ("g.mjs", "export const f = (x) => x === NaN;\n"),
-            ("h.cjs", "module.exports = function(x) { return x === NaN; };\n"),
+            (
+                "h.cjs",
+                "module.exports = function(x) { return x === NaN; };\n",
+            ),
         ];
         for (name, src) in samples {
             let (fixed, remaining, count) = run_fix_on(name, src);
@@ -954,8 +966,14 @@ mod tests {
         assert_eq!(cnt_re, 1, "only stateless regex should be hoisted");
         assert!(rem_re.is_empty());
         assert!(fixed_re.contains("const __RIFFTY_RE_1 = new RegExp(\"^[0-9]+$\", \"i\");"));
-        assert!(fixed_re.contains("new RegExp(\"[0-9]+\", \"g\")"), "/g must NOT be hoisted");
-        assert!(fixed_re.contains("new RegExp(\"[0-9]+\", \"y\")"), "/y must NOT be hoisted");
+        assert!(
+            fixed_re.contains("new RegExp(\"[0-9]+\", \"g\")"),
+            "/g must NOT be hoisted"
+        );
+        assert!(
+            fixed_re.contains("new RegExp(\"[0-9]+\", \"y\")"),
+            "/y must NOT be hoisted"
+        );
 
         // 4. JSTS-INTL-LOOP-001 (constant hoisted; dynamic locale NOT hoisted)
         let (fixed_intl, rem_intl, cnt_intl) = run_fix_on(
@@ -969,7 +987,9 @@ mod tests {
         );
         assert_eq!(cnt_intl, 1);
         assert!(rem_intl.is_empty());
-        assert!(fixed_intl.contains("const __RIFFTY_INTL_1 = new Intl.DateTimeFormat(\"en-US\", { dateStyle: \"short\" });"));
+        assert!(fixed_intl.contains(
+            "const __RIFFTY_INTL_1 = new Intl.DateTimeFormat(\"en-US\", { dateStyle: \"short\" });"
+        ));
         assert!(fixed_intl.contains("new Intl.DateTimeFormat(locale)"));
 
         // 5. JSTS-PROMISE-EXEC-001 (ManualOnly error; non-async executor NOT flagged)
@@ -1007,7 +1027,9 @@ export async function insideTry(fn: () => Promise<number>) {
         );
         assert_eq!(cnt_aw, 1);
         assert!(rem_aw.is_empty());
-        assert!(fixed_aw.contains("export async function outsideTry(fn: () => Promise<number>) {\n  return fn();\n}"));
+        assert!(fixed_aw.contains(
+            "export async function outsideTry(fn: () => Promise<number>) {\n  return fn();\n}"
+        ));
         assert!(fixed_aw.contains("try {\n    return await fn();\n  }"));
     }
 
@@ -1016,7 +1038,8 @@ export async function insideTry(fn: () => Promise<number>) {
         let mgr = OxcImportAdapter;
 
         // 1. Preserves 'use client' directive and merges into existing import
-        let src1 = "'use client';\nimport { useState } from \"react\";\nexport const x = useState(0);\n";
+        let src1 =
+            "'use client';\nimport { useState } from \"react\";\nexport const x = useState(0);\n";
         let edits1 = mgr.resolve_import_edits(
             src1,
             &[
@@ -1031,9 +1054,18 @@ export async function insideTry(fn: () => Promise<number>) {
             ],
         );
         let out1 = apply_edits_bottom_to_top(src1, &edits1).unwrap();
-        assert!(out1.starts_with("'use client';\n"), "directive must stay first:\n{out1}");
-        assert!(out1.contains("import { useState, useEffect } from \"react\";"), "got:\n{out1}");
-        assert!(out1.contains("import { z } from \"zod\";\n"), "got:\n{out1}");
+        assert!(
+            out1.starts_with("'use client';\n"),
+            "directive must stay first:\n{out1}"
+        );
+        assert!(
+            out1.contains("import { useState, useEffect } from \"react\";"),
+            "got:\n{out1}"
+        );
+        assert!(
+            out1.contains("import { z } from \"zod\";\n"),
+            "got:\n{out1}"
+        );
 
         // 2. Shadowed local binding prevents conflicting import
         let src2 = "'use strict';\nconst z = 42;\nexport const y = z;\n";
@@ -1044,7 +1076,10 @@ export async function insideTry(fn: () => Promise<number>) {
                 symbol: Some("z".to_string()),
             }],
         );
-        assert!(edits2.is_empty(), "shadowed `z` must not emit duplicate import");
+        assert!(
+            edits2.is_empty(),
+            "shadowed `z` must not emit duplicate import"
+        );
     }
 
     #[test]

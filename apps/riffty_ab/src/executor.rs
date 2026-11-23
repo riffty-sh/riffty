@@ -158,7 +158,10 @@ mod tests {
 
         // Env allowlist test: explicit env var passes, arbitrary secret env does not
         let mut extra = BTreeMap::new();
-        extra.insert("RIFFTY_AB_TEST_VAR".to_string(), "allowed_value".to_string());
+        extra.insert(
+            "RIFFTY_AB_TEST_VAR".to_string(),
+            "allowed_value".to_string(),
+        );
         let env_out = run_sandboxed_command(
             &tmp,
             "printf '%s|%s' \"$RIFFTY_AB_TEST_VAR\" \"${AWS_SECRET_ACCESS_KEY:-EMPTY}\"",

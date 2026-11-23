@@ -82,7 +82,13 @@ pub fn clone_and_checkout_pinned(
 
     run_git(
         Some(dest_dir),
-        &["-c", "advice.detachedHead=false", "checkout", "--force", commit_sha],
+        &[
+            "-c",
+            "advice.detachedHead=false",
+            "checkout",
+            "--force",
+            commit_sha,
+        ],
     )?;
     run_git(Some(dest_dir), &["clean", "-fdx"])?;
     Ok(())
@@ -287,11 +293,13 @@ mod tests {
         let tampered = attest_baseline(&repo, &head, Some(&tree), false).unwrap();
         assert!(!tampered.attested, "tampered repo must fail attestation");
         assert!(!tampered.working_tree_clean);
-        assert!(tampered
-            .failure_reason
-            .as_deref()
-            .unwrap()
-            .contains("dirty baseline"));
+        assert!(
+            tampered
+                .failure_reason
+                .as_deref()
+                .unwrap()
+                .contains("dirty baseline")
+        );
 
         // Clean up tracked modification and test untracked file
         run_git(Some(&repo), &["checkout", "--", "app.py"]).unwrap();

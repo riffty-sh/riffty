@@ -1,14 +1,13 @@
-# `riffty` (v2) Production Readiness Architecture (7 Pillars)
+# `riffty` (v0.3) Production Readiness Architecture (7 Pillars)
 
-`riffty` operates as a hermetic local developer CLI (`riffty check`) and stdio Model Context Protocol server (`riffty mcp`). Below is how each of the 7 Production Readiness Pillars applies to its Rust binary architecture:
+`riffty` operates as a hermetic multi-language developer CLI (`riffty check`, `riffty infra`, `riffty efficiency`), empirical A/B verifier (`riffty-ab`), and stdio Model Context Protocol server (`riffty mcp`). Below is how each of the 7 Production Readiness Pillars applies to its hexagonal Rust architecture:
 
 | Pillar | Architectural Control | Verification Artifact |
 | :--- | :--- | :--- |
-| **1. Security & Workspace Containment** | `FsWorkspaceAdapter` canonicalizes paths and refuses disk writes outside the configured workspace root; zero network listeners or shell-injection interpolation (`std::process::Command` arg arrays only). | `crates/adapters/riffty_adapter_fs` |
-| **2. State & Cache Lifecycle** | Deterministic `FileId` ordering and thread-safe Salsa / semantic index snapshots per analysis pass; atomic file writes during `--fix` / `auto_heal`. | `crates/adapters/riffty_adapter_ty` |
-| **3. API & Protocol Validation** | Typed `serde` / `rmcp` request validation for `riffty_review_changes` (`target: unstaged \| staged \| branch_diff`, `base_ref`, `auto_heal`) with standard JSON-RPC error payloads. | `apps/riffty_mcp` |
-| **4. Observability & Telemetry** | Compact structured `summary` telemetry (`files_reviewed`, `auto_healed_count`, `blocking_issues`, `iterations`) while keeping `stdout` strictly clean for JSON-RPC frames. | `crates/riffty_pipeline` |
-| **5. Resource Hardening & Safety Caps** | Hard 10-iteration fixpoint ceiling, repeat-source cycle breaker, UTF-8 char-boundary validation, and `Unknown`/`Any` diagnostic suppression (`R03`). | `crates/riffty_pipeline` |
-| **6. 12-Factor Configuration** | Configurable via CLI flags and `RIFFTY_*` environment variables documented in `.env.example` with zero hardcoded absolute paths. | `.env.example`, `apps/riffty_cli` |
-| **7. Packaging, Containerization & CI** | Multi-stage non-root Rust `Dockerfile`, `docker-compose.yml`, and GitHub Actions workflow running `RUSTFLAGS="-D warnings" cargo test --workspace` + `clippy` + Boule affirmation audit. | `Dockerfile`, `docker-compose.yml`, `.github/workflows/ci.yml` |
-
+| **1. Security & Workspace Containment** | `FsWorkspaceAdapter` canonicalizes paths and refuses disk writes outside the workspace root; SHA-256 verification gates the Java Tier 2 sidecar (`verify_jar_sha256`); zero network listeners; native `ureq` HTTP client with optional bearer tokens (zero `curl` shell-outs). | `crates/adapters/riffty_adapter_fs`, `crates/adapters/riffty_adapter_plugin`, `crates/adapters/riffty_adapter_infra` |
+| **2. State & Cache Lifecycle** | Deterministic `FileId` ordering, isolated Salsa/`tsrs` snapshots per analysis pass, atomic file writes during `--fix` / `auto_heal`, and SHA-256-attested `riffty-ab` evidence manifests. | `crates/adapters/riffty_adapter_ty`, `crates/riffty_ab_core` |
+| **3. API & Protocol Validation** | Typed `serde` / `rmcp` request validation for `riffty_review_changes` (`target: unstaged \| staged \| branch_diff`, `base_ref`, `auto_heal`) and versioned JSON-RPC v1 sidecar protocol. | `apps/riffty_mcp`, `crates/adapters/riffty_adapter_plugin` |
+| **4. Observability & Telemetry** | Compact structured `--summary` with `AnalysisProvenance` (explicit `degraded_reason` on Tier 2 fallback), SARIF 2.1.0 output, Prometheus/OpenCost/K8s HPA telemetry adapters, and clean `stdout` for JSON-RPC frames. | `crates/riffty_pipeline`, `crates/riffty_infra_core` |
+| **5. Resource Hardening & Safety Caps** | Hard 10-iteration fixpoint ceiling, repeat-source cycle breaker, 64 MiB sidecar stdout cap, UTF-8 char-boundary validation, and fail-closed `ManualOnly` / `Unknown` suppression (`R03`). | `crates/riffty_pipeline`, `crates/adapters/riffty_adapter_plugin` |
+| **6. 12-Factor Configuration** | Configurable via CLI flags, `riffty.toml`, and `RIFFTY_*` / `PROMETHEUS_*` / `OPENCOST_*` environment variables documented in `.env.example` with zero hardcoded paths. | `.env.example`, `apps/riffty_cli` |
+| **7. Packaging, Containerization & CI** | Multi-stage non-root Rust `Dockerfile` (`riffty`, `riffty_mcp`, `riffty-ab`), multi-platform GitHub Release archives bundling the Java Tier 2 sidecar, Homebrew tap, and CI running `cargo fmt --check`, `RUSTFLAGS="-D warnings" cargo test --workspace`, `clippy`, Maven sidecar build/test, and Boule affirmation audit. | `Dockerfile`, `.github/workflows/ci.yml`, `.github/workflows/release.yml` |

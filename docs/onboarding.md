@@ -1,18 +1,17 @@
-# `riffty` (v2) — Developer & Stakeholder Living Onboarding Guide
+# `riffty` (v0.3) — Developer & Stakeholder Living Onboarding Guide
 
 ## 1. Mission & Strategic Scope
-`riffty` is a deterministic, hexagonal (Ports & Adapters), type-aware static analysis and surgical byte-offset remediation engine for Python written in Rust.
+`riffty` is a deterministic, hexagonal (Ports & Adapters) multi-language software remediation and engineering-efficiency engine written in Rust, supporting **Python, Java, and JavaScript/TypeScript**, empirical A/B verification (`riffty-ab`), and infrastructure cost intelligence (`riffty_infra_core`).
 
 ### What `riffty` Solves
-1. **Type-Aware Python Bug Detection**: Catches high-confidence Python defects that slip past syntactic linters (`ruff`) because proving them requires resolved callable signatures, async coroutine metadata, purity lattices, or container element types:
-   - `RFT-004` (`UnawaitedCoroutine`): Bare expression-statement calls to `async def` callables without `await`, `return`, or variable assignment.
-   - `RFT-015` (`CollectionIncompatibleType`): Membership checks (`x in container`, `x not in container`) where `x` and container element types are provably disjoint under open-world nominal, `StrEnum`/`IntEnum`, `@property`, and custom `__eq__` soundness (`R13`, `R18`).
-   - `RFT-118` (`WarningsMissingStacklevel`): `warnings.warn(...)` calls omitting both `stacklevel=` and Python 3.12+ `skip_file_prefixes=`, misattributing caller frames (`R11`, `R20`).
-   - `RFT-119` (`WarningsNarrowSkipFilePrefixes`): `warnings.warn(..., skip_file_prefixes=...)` inside internal helper subpackages (`_lib/`, `_internal/`, `_shared/`, `_compat/`) that only skip a single `__file__` directory (`R20`).
-   - `RFT-202` + `RFT-301` (`AssertWarnsMigration`, SciPy #20068): Migrates `np.testing.assert_warns(W, fn, *args, match=...)` to `with pytest.warns(W, match=...): fn(*args)`, classifying as `Applicability::Safe` **only** when `fn` does not accept `match` and has `has_var_kwargs == false` (downgrading `**kwargs` wrappers to `Applicability::Unsafe`).
-2. **Surgical UTF-8 Byte-Offset Auto-Fixes & Lexical-Scope Import Healing**: Rewrites idioms via exact `TextRange` byte edits plus lexical scope-aware `ScopedImportRequest` synthesis (`R19`)—updating shadowed function-local and single-symbol deprecated module imports in-place without AST pretty-printing—preserving 100% of surrounding and inline comments.
-3. **Refaster-Style Declarative YAML Rules**: Combines `ast-grep` structural patterns (`$VAR`, `$$$ARGS`) with `TypeOraclePort` semantic guards (`fqname_in`, `type_assignable_to`, `not_overridden_below`, `not_inside_with`, `inside_subclass_of`, `inside_async_def`, `purity`, `callable_accepts_kwarg`) and purity-guarded metavariable duplication (`R05`, `R17`, `R21`).
-4. **Zero-Token AI Diff Review (`riffty mcp`)**: Exposes `riffty_review_changes` over stdio JSON-RPC (`rmcp`), scoping analysis to `git diff` hunks plus cross-file `TypeOraclePort::reverse_dependents` callers, healing `Safe` issues on disk, and returning a compact `APPROVED` / `REQUEST_CHANGES` verdict.
+1. **Multi-Language Type-Aware Bug Detection & Fail-Closed Auto-Remediation**:
+   - **Python (`riffty_rules_builtin`, `riffty_adapter_ruff_ast`, `riffty_adapter_ty`, `riffty_adapter_refaster`):** Catches high-confidence Python defects (`RFT-004`, `RFT-015`, `RFT-118`, `RFT-119`, `RFT-202`/`RFT-301`, `RFT-302`) and YAML Refaster rules guarded by Astral `ty` Salsa semantic queries.
+   - **Java (`riffty_adapter_java_fast`, `riffty_adapter_plugin`, `plugins/riffty-java`):** Zero-JVM Tier 1 (`tree-sitter-java`) + Tier 2 semantic sidecar (JDK 25 `javac` `Trees`, Error Prone, Picnic, warm daemon, `[[java.architecture.forbid]]`).
+   - **JS/TS (`riffty_adapter_jsts_fast`, `riffty_adapter_tsrs`):** Pure-Rust Tier 1 (`oxc`) + Tier 2 (`tsrs`) with zero Node.js runtime dependency and `[[jsts.architecture.forbid]]`.
+2. **Surgical UTF-8 Byte-Offset Auto-Fixes & Lexical-Scope Import Healing**: Rewrites idioms via exact `TextRange` byte edits without AST pretty-printing, preserving 100% of surrounding and inline comments.
+3. **Empirical A/B Verification (`riffty-ab`)**: Alternating `AB/BA` comparative benchmarking with exact Student-t 95% CI, p95/p99/max statistics, tamper guard, and SHA-256 evidence attestation.
+4. **Infrastructure Efficiency & Cost Intelligence (`riffty infra`, `riffty efficiency`)**: Pure hexagonal core (`riffty_infra_core`) with offline `CoreOnly` and live `Connected` modes (native Rust HTTP adapters for Prometheus & OpenCost, Kubernetes HPA, public pricing).
+5. **Zero-Token AI Diff Review (`riffty mcp`)**: Exposes `riffty_review_changes` over stdio JSON-RPC (`rmcp`), scoping analysis to `git diff` hunks plus cross-file `reverse_dependents` callers, healing `Safe` issues on disk, and returning a compact `APPROVED` / `REQUEST_CHANGES` verdict.
 
 ---
 

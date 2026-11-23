@@ -416,11 +416,10 @@ fn run_test_suite(
             &exec.stderr,
         )),
         TestParserKind::JunitXml => {
-            let rel_pattern = manifest
-                .test
-                .report_path
-                .as_deref()
-                .ok_or_else(|| "test.report_path is required for junit_xml parser".to_string())?;
+            let rel_pattern =
+                manifest.test.report_path.as_deref().ok_or_else(|| {
+                    "test.report_path is required for junit_xml parser".to_string()
+                })?;
             let files = resolve_junit_files(repo_dir, rel_pattern);
             if files.is_empty() {
                 return Ok(TestRunSummary {

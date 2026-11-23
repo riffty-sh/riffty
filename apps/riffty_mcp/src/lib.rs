@@ -6,8 +6,8 @@ use riffty_adapter_fs::FsWorkspaceAdapter;
 use riffty_adapter_java_fast::JavaFastAnalyzer;
 use riffty_adapter_plugin::{JavaPluginAdapter, discover_java_sidecar_bundle};
 use riffty_adapter_refaster::RefasterYamlRule;
-use riffty_adapter_tsrs::{JsTsArchitectureForbidRule, TsrsSemanticAnalyzer};
 use riffty_adapter_ruff_ast::{RuffAstAdapter, RuffImportAdapter};
+use riffty_adapter_tsrs::{JsTsArchitectureForbidRule, TsrsSemanticAnalyzer};
 use riffty_adapter_ty::TyOracleAdapter;
 use riffty_core::{AnalysisTier, Language, RulePlugin};
 use riffty_pipeline::{
@@ -144,9 +144,7 @@ pub fn resolve_contained_workspace_root(
         canonical_default.join(candidate)
     };
     let canonical_requested = resolved.canonicalize().map_err(|e| {
-        format!(
-            "invalid `workspace_root` `{req_str}`: failed to canonicalize ({e})"
-        )
+        format!("invalid `workspace_root` `{req_str}`: failed to canonicalize ({e})")
     })?;
 
     if !canonical_requested.starts_with(&canonical_default) {
@@ -399,8 +397,7 @@ mod tests {
         let default_ok = resolve_contained_workspace_root(&root, None).unwrap();
         assert_eq!(default_ok, root.canonicalize().unwrap());
 
-        let sub_ok =
-            resolve_contained_workspace_root(&root, Some(sub.to_str().unwrap())).unwrap();
+        let sub_ok = resolve_contained_workspace_root(&root, Some(sub.to_str().unwrap())).unwrap();
         assert_eq!(sub_ok, sub.canonicalize().unwrap());
 
         let abs_escape =
@@ -420,8 +417,7 @@ mod tests {
         let outside = make_temp_dir("jsts_mcp_outside");
 
         // 1. Path traversal blocked on JS/TS workspace
-        let escape_err = resolve_contained_workspace_root(&root, Some("../"))
-            .unwrap_err();
+        let escape_err = resolve_contained_workspace_root(&root, Some("../")).unwrap_err();
         assert!(escape_err.contains("security boundary violation"));
         let abs_escape =
             resolve_contained_workspace_root(&root, Some(outside.to_str().unwrap())).unwrap_err();

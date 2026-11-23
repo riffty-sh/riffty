@@ -181,7 +181,9 @@ fn matches_extension(path: &Path, extensions: &[&str]) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;
     };
-    extensions.iter().any(|allowed| ext.eq_ignore_ascii_case(allowed))
+    extensions
+        .iter()
+        .any(|allowed| ext.eq_ignore_ascii_case(allowed))
 }
 
 impl WorkspaceVfsPort for FsWorkspaceAdapter {
@@ -282,12 +284,8 @@ impl PatchApplierPort for FsWorkspaceAdapter {
         updated_source: &str,
     ) -> Result<(), String> {
         // Reject symlinks before canonicalization to prevent symlink-following TOCTOU attacks.
-        let symlink_meta = fs::symlink_metadata(target_path).map_err(|e| {
-            format!(
-                "failed to stat target `{}`: {e}",
-                target_path.display()
-            )
-        })?;
+        let symlink_meta = fs::symlink_metadata(target_path)
+            .map_err(|e| format!("failed to stat target `{}`: {e}", target_path.display()))?;
         if symlink_meta.file_type().is_symlink() {
             return Err(format!(
                 "security boundary violation: refusing to patch symlink `{}`",
@@ -634,7 +632,11 @@ mod tests {
 
         // 4. turbo.json / pnpm-workspace.yaml also anchor monorepo root
         fs::write(root.join("package.json"), r#"{"name":"mono"}"#).unwrap();
-        fs::write(root.join("pnpm-workspace.yaml"), "packages:\n  - packages/*\n").unwrap();
+        fs::write(
+            root.join("pnpm-workspace.yaml"),
+            "packages:\n  - packages/*\n",
+        )
+        .unwrap();
         let r_pnpm = WorkspaceResolver::resolve(&ts_file);
         assert_eq!(r_pnpm.marker, WorkspaceMarker::JsTsWorkspaceRoot);
         assert_eq!(r_pnpm.root, root);

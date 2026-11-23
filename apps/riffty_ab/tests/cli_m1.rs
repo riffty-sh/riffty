@@ -147,7 +147,10 @@ timeout_secs = 60
     assert_eq!(report["treatment"]["pass2_auto_healed_count"], 0);
     assert_eq!(report["variant_a"]["failed"], 1);
     assert_eq!(report["variant_b"]["passed"], 1);
-    assert_eq!(report["comparison"]["fixed_tests"][0], "nan::test_is_invalid");
+    assert_eq!(
+        report["comparison"]["fixed_tests"][0],
+        "nan::test_is_invalid"
+    );
 
     assert!(out_dir.join("ab_report.json").is_file());
     assert!(out_dir.join("AB_REPORT.md").is_file());
@@ -220,14 +223,20 @@ parser = "tap"
     assert_eq!(reg_out.status.code(), Some(1), "regression must exit 1");
     let reg_json: serde_json::Value = serde_json::from_slice(&reg_out.stdout).unwrap();
     assert_eq!(reg_json["verdict"], "REJECTED_REGRESSION");
-    assert_eq!(reg_json["comparison"]["regressed_tests"][0], "expects false on NaN");
+    assert_eq!(
+        reg_json["comparison"]["regressed_tests"][0],
+        "expects false on NaN"
+    );
 
     // 2. NO_OP test: clean code with 0 riffty fixes
     let repo_noop = root.join("noop");
     std::fs::create_dir_all(&repo_noop).unwrap();
     let sha_noop = init_git_repo(
         &repo_noop,
-        &[("src/clean.mjs", "export function add(a, b) { return a + b; }\n")],
+        &[(
+            "src/clean.mjs",
+            "export function add(a, b) { return a + b; }\n",
+        )],
     );
     let noop_manifest = root.join("noop.toml");
     std::fs::write(

@@ -269,33 +269,25 @@ mod tests {
 
     #[test]
     fn req_m0_04_ast_grep_matches_typescript_tsx_and_javascript() {
-        let ts_src = "export function cloneIt<T>(x: T): T { return JSON.parse(JSON.stringify(x)); }\n";
+        let ts_src =
+            "export function cloneIt<T>(x: T): T { return JSON.parse(JSON.stringify(x)); }\n";
         let ts_adapter = AstGrepJsTsAdapter::new(JsTsDialect::TypeScript);
         let ts_matches = ts_adapter
             .find_matches(ts_src, "JSON.parse(JSON.stringify($X))")
             .unwrap();
         assert_eq!(ts_matches.len(), 1);
-        assert_eq!(
-            ts_matches[0].captures["X"].range.slice(ts_src),
-            Some("x")
-        );
+        assert_eq!(ts_matches[0].captures["X"].range.slice(ts_src), Some("x"));
 
         let tsx_src = "export const View = ({ a }: { a: number }) => <div>{a === NaN}</div>;\n";
         let tsx_adapter = AstGrepJsTsAdapter::new(JsTsDialect::Tsx);
         let tsx_matches = tsx_adapter.find_matches(tsx_src, "$X === NaN").unwrap();
         assert_eq!(tsx_matches.len(), 1);
-        assert_eq!(
-            tsx_matches[0].captures["X"].range.slice(tsx_src),
-            Some("a")
-        );
+        assert_eq!(tsx_matches[0].captures["X"].range.slice(tsx_src), Some("a"));
 
         let js_src = "function check(v) { return v !== NaN; }\n";
         let js_adapter = AstGrepJsTsAdapter::new(JsTsDialect::JavaScript);
         let js_matches = js_adapter.find_matches(js_src, "$X !== NaN").unwrap();
         assert_eq!(js_matches.len(), 1);
-        assert_eq!(
-            js_matches[0].captures["X"].range.slice(js_src),
-            Some("v")
-        );
+        assert_eq!(js_matches[0].captures["X"].range.slice(js_src), Some("v"));
     }
 }

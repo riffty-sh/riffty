@@ -210,11 +210,7 @@ pub fn evaluate_verdict(
     }
 
     let Some(treat) = treatment else {
-        return (
-            Verdict::NoOp,
-            None,
-            "no treatment executed".to_string(),
-        );
+        return (Verdict::NoOp, None, "no treatment executed".to_string());
     };
 
     if !treat.has_edits() {
@@ -475,13 +471,7 @@ mod tests {
     fn emits_no_op_when_diff_is_empty() {
         let att = clean_attestation();
         let treat = sample_treatment("", true);
-        let (v, _, _) = evaluate_verdict(
-            CaseKind::FinopsOrCleanup,
-            &att,
-            Some(&treat),
-            None,
-            None,
-        );
+        let (v, _, _) = evaluate_verdict(CaseKind::FinopsOrCleanup, &att, Some(&treat), None, None);
         assert_eq!(v, Verdict::NoOp);
     }
 

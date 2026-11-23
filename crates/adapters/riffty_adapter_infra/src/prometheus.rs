@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::time::Duration;
 
 use riffty_infra_core::{
     InfraPluginHealth, MeasurementWindow, MetricsProviderPort, ObservedMetrics, WorkloadReference,
@@ -9,12 +9,37 @@ use serde_json::Value;
 #[derive(Debug, Clone)]
 pub struct PrometheusMetricsAdapter {
     pub base_url: String,
+    pub bearer_token: Option<String>,
 }
 
 impl PrometheusMetricsAdapter {
     pub fn new(base_url: impl Into<String>) -> Self {
         let trimmed = base_url.into().trim().trim_end_matches('/').to_string();
-        Self { base_url: trimmed }
+        let bearer_token = std::env::var("PROMETHEUS_BEARER_TOKEN")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        Self {
+            base_url: trimmed,
+            bearer_token,
+        }
+    }
+
+    pub fn with_bearer_token(mut self, token: impl Into<String>) -> Self {
+        let trimmed = token.into().trim().to_string();
+        self.bearer_token = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        };
+        self
+    }
+
+    fn http_agent(timeout_secs: u64) -> ureq::Agent {
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(timeout_secs)))
+            .build()
+            .into()
     }
 
     /// Probes Prometheus readiness via `/-/ready` (falling back to `/api/v1/status/runtimeinfo`).
@@ -23,65 +48,45 @@ impl PrometheusMetricsAdapter {
             return InfraPluginHealth::Unavailable("PROMETHEUS_URL not configured".to_string());
         }
 
+        let agent = Self::http_agent(2);
         let ready_url = format!("{}/-/ready", self.base_url);
-        match Command::new("curl")
-            .args(["-sf", "--max-time", "2", &ready_url])
-            .output()
-        {
-            Ok(out) if out.status.success() => return InfraPluginHealth::Healthy,
-            Err(e) => {
-                return InfraPluginHealth::Degraded(format!(
-                    "failed to invoke curl for Prometheus health check: {e}"
-                ));
-            }
-            Ok(_) => {}
+        let mut req = agent.get(&ready_url);
+        if let Some(ref tok) = self.bearer_token {
+            req = req.header("Authorization", &format!("Bearer {tok}"));
+        }
+        if req.call().is_ok() {
+            return InfraPluginHealth::Healthy;
         }
 
         let runtime_url = format!("{}/api/v1/status/runtimeinfo", self.base_url);
-        match Command::new("curl")
-            .args(["-sf", "--max-time", "2", &runtime_url])
-            .output()
-        {
-            Ok(out) if out.status.success() => InfraPluginHealth::Healthy,
-            Ok(_) => InfraPluginHealth::Degraded(format!(
-                "Prometheus endpoint '{}' unreachable or returned non-200",
-                self.base_url
-            )),
+        let mut req = agent.get(&runtime_url);
+        if let Some(ref tok) = self.bearer_token {
+            req = req.header("Authorization", &format!("Bearer {tok}"));
+        }
+        match req.call() {
+            Ok(_) => InfraPluginHealth::Healthy,
             Err(e) => InfraPluginHealth::Degraded(format!(
-                "failed to invoke curl for Prometheus health check: {e}"
+                "Prometheus endpoint '{}' unreachable or returned error: {e}",
+                self.base_url
             )),
         }
     }
 
     fn query_scalar(&self, promql: &str) -> Result<Option<f64>, String> {
         let query_url = format!("{}/api/v1/query", self.base_url);
-        let query_arg = format!("query={promql}");
-
-        let out = Command::new("curl")
-            .args([
-                "-sfG",
-                "--max-time",
-                "5",
-                "--data-urlencode",
-                &query_arg,
-                &query_url,
-            ])
-            .output()
-            .map_err(|e| format!("failed to execute curl against Prometheus '{query_url}': {e}"))?;
-
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            return Err(format!(
-                "Prometheus query failed ({query_url}): {}",
-                if stderr.is_empty() {
-                    format!("exit status {}", out.status)
-                } else {
-                    stderr
-                }
-            ));
+        let agent = Self::http_agent(5);
+        let mut req = agent.get(&query_url).query("query", promql);
+        if let Some(ref tok) = self.bearer_token {
+            req = req.header("Authorization", &format!("Bearer {tok}"));
         }
 
-        let body = String::from_utf8(out.stdout)
+        let mut resp = req
+            .call()
+            .map_err(|e| format!("Prometheus query failed ({query_url}): {e}"))?;
+
+        let body = resp
+            .body_mut()
+            .read_to_string()
             .map_err(|e| format!("invalid UTF-8 response from Prometheus: {e}"))?;
         parse_prometheus_scalar(&body)
     }

@@ -2,6 +2,7 @@
 name = "riffty_ab"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Deterministic A/B empirical verification runner and read-only discovery CLI for riffty"
 

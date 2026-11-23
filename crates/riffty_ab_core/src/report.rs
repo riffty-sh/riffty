@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::CaseKind;
 use crate::manifest::CURRENT_SCHEMA_VERSION;
 use crate::parsers::TestRunSummary;
 use crate::stats::PerfComparison;
@@ -8,7 +9,6 @@ use crate::verdict::{
     BaselineAttestation, TestComparison, TreatmentSummary, Verdict, compute_sha256_hex,
     evaluate_verdict,
 };
-use crate::CaseKind;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AbReport {
@@ -136,7 +136,10 @@ pub fn verify_report_integrity(report: &AbReport) -> Result<(), Vec<String>> {
 
 pub fn render_ab_report_md(report: &AbReport) -> String {
     let mut md = String::new();
-    md.push_str(&format!("# `riffty-ab` Empirical Report — `{}`\n\n", report.case_id));
+    md.push_str(&format!(
+        "# `riffty-ab` Empirical Report — `{}`\n\n",
+        report.case_id
+    ));
     md.push_str(&format!("- **Verdict:** `{}`\n", report.verdict));
     md.push_str(&format!("- **Reason:** {}\n", report.verdict_reason));
     md.push_str(&format!("- **Case Kind:** `{}`\n", report.case_kind));
@@ -153,7 +156,10 @@ pub fn render_ab_report_md(report: &AbReport) -> String {
     ));
 
     if let Some(ref treat) = report.treatment {
-        md.push_str(&format!("- **Riffty Version:** `{}`\n", treat.riffty_version));
+        md.push_str(&format!(
+            "- **Riffty Version:** `{}`\n",
+            treat.riffty_version
+        ));
         md.push_str(&format!("- **Patch SHA-256:** `{}`\n", treat.patch_sha256));
         md.push_str(&format!(
             "- **2nd-Run Idempotent:** `{}` (pass1_healed={}, pass2_healed={})\n",
@@ -250,9 +256,13 @@ pub fn render_ab_report_md(report: &AbReport) -> String {
         md.push_str("\n## Deterministic Unified Diff (`riffty check --fix`)\n\n");
         md.push_str("```diff\n");
         let diff_preview = if treat.unified_diff.len() > 8000 {
+            let mut cutoff = 8000;
+            while cutoff > 0 && !treat.unified_diff.is_char_boundary(cutoff) {
+                cutoff -= 1;
+            }
             format!(
                 "{}\n... [truncated; see treatment.patch]\n",
-                &treat.unified_diff[..treat.unified_diff.floor_char_boundary(8000)]
+                &treat.unified_diff[..cutoff]
             )
         } else {
             treat.unified_diff.clone()
@@ -283,7 +293,10 @@ pub fn render_pr_for_review_md(report: &AbReport) -> String {
         report.repo_url, report.attestation.actual_head_sha
     ));
     md.push_str(&format!("- **Empirical Verdict:** `{}`\n", report.verdict));
-    md.push_str(&format!("- **Verification Note:** {}\n", report.verdict_reason));
+    md.push_str(&format!(
+        "- **Verification Note:** {}\n",
+        report.verdict_reason
+    ));
 
     if let Some(ref perf) = report.perf {
         md.push_str(&format!(
@@ -344,7 +357,8 @@ mod tests {
             vec![],
             false,
         );
-        let diff = "--- a/src/a.ts\n+++ b/src/a.ts\n-JSON.parse(JSON.stringify(x))\n+structuredClone(x)\n";
+        let diff =
+            "--- a/src/a.ts\n+++ b/src/a.ts\n-JSON.parse(JSON.stringify(x))\n+structuredClone(x)\n";
         let treat = TreatmentSummary {
             riffty_version: "riffty 0.2.0".to_string(),
             baseline_diagnostics_count: 1,
@@ -409,7 +423,12 @@ mod tests {
         assert!(errs.iter().any(|e| e.contains("verdict tampering")));
 
         let mut forged_diff = sample_report();
-        forged_diff.treatment.as_mut().unwrap().unified_diff.push_str("+hack\n");
+        forged_diff
+            .treatment
+            .as_mut()
+            .unwrap()
+            .unified_diff
+            .push_str("+hack\n");
         let errs2 = verify_report_integrity(&forged_diff).unwrap_err();
         assert!(errs2.iter().any(|e| e.contains("patch_sha256 mismatch")));
     }

@@ -376,7 +376,10 @@ fn cli_fix_dry_run_emits_unified_diff_without_modifying_disk() {
         stdout.contains("+    warnings.warn(\"oops\", stacklevel=2)"),
         "stdout:\n{stdout}"
     );
-    assert!(stdout.contains("dry-run, no files written"), "stdout:\n{stdout}");
+    assert!(
+        stdout.contains("dry-run, no files written"),
+        "stdout:\n{stdout}"
+    );
 
     // Disk file MUST remain untouched
     assert_eq!(std::fs::read_to_string(&app_py).unwrap(), original);
@@ -455,7 +458,10 @@ fn cli_java_tier1_fix_sarif_explain_doctor_and_require_tier2() {
     let after = std::fs::read_to_string(&billing_java).unwrap();
     assert!(after.contains("BigDecimal.valueOf(0.1)"), "after:\n{after}");
     assert!(after.contains("Integer.valueOf(7)"), "after:\n{after}");
-    assert!(after.contains("items.stream().findAny().isEmpty()"), "after:\n{after}");
+    assert!(
+        after.contains("items.stream().findAny().isEmpty()"),
+        "after:\n{after}"
+    );
 
     // 4. `riffty explain JAVA-BIGDEC-001` & `riffty doctor`
     let explain_out = Command::new(bin)
@@ -656,8 +662,14 @@ fn cli_jsts_tier1_fix_sarif_explain_ignore_and_require_tier2() {
         .expect("riffty check --fix");
     let fix_report: serde_json::Value =
         serde_json::from_slice(&fix_out.stdout).expect("valid fix json");
-    assert_eq!(fix_report["auto_healed_count"], 4, "fix_report: {fix_report}");
-    assert_eq!(fix_report["diagnostics_count"], 1, "only ManualOnly JSTS-PROMISE-EXEC-001 remains");
+    assert_eq!(
+        fix_report["auto_healed_count"], 4,
+        "fix_report: {fix_report}"
+    );
+    assert_eq!(
+        fix_report["diagnostics_count"], 1,
+        "only ManualOnly JSTS-PROMISE-EXEC-001 remains"
+    );
 
     let after = std::fs::read_to_string(&app_ts).unwrap();
     assert!(after.contains("const suppressed = x === NaN; // riffty: ignore[JSTS-NAN-EQ-001]"));
@@ -689,7 +701,13 @@ fn req_m2_04_cli_jsts_tier2_tsrs_require_tier2_pass_and_degraded_exit2() {
 
     // 1. Healthy Tier 2: --require-tier2 exits 1 on finding (NOT 2!) and emits `tier2_semantic`
     let check_out = Command::new(bin)
-        .args(["check", "--require-tier2", "--format", "json", repo.to_str().unwrap()])
+        .args([
+            "check",
+            "--require-tier2",
+            "--format",
+            "json",
+            repo.to_str().unwrap(),
+        ])
         .output()
         .expect("riffty check --require-tier2");
     assert_eq!(check_out.status.code(), Some(1));
@@ -710,7 +728,10 @@ fn req_m2_04_cli_jsts_tier2_tsrs_require_tier2_pass_and_degraded_exit2() {
         .expect("riffty check --require-tier2 --fix");
     assert_eq!(fix_out.status.code(), Some(0));
     let fixed = std::fs::read_to_string(&app_ts).unwrap();
-    assert!(fixed.contains("prices.sort((a, b) => a - b)"), "fixed:\n{fixed}");
+    assert!(
+        fixed.contains("prices.sort((a, b) => a - b)"),
+        "fixed:\n{fixed}"
+    );
 
     // 3. Degraded when package.json declares dependencies without node_modules -> exit code 2!
     std::fs::write(

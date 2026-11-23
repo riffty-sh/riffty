@@ -49,8 +49,17 @@ install -m 0755 "${TMP_DIR}/riffty" "${INSTALL_DIR}/riffty"
 if [ -f "${TMP_DIR}/riffty_mcp" ]; then
   install -m 0755 "${TMP_DIR}/riffty_mcp" "${INSTALL_DIR}/riffty_mcp"
 fi
+if [ -f "${TMP_DIR}/riffty-ab" ]; then
+  install -m 0755 "${TMP_DIR}/riffty-ab" "${INSTALL_DIR}/riffty-ab"
+fi
+if [ -f "${TMP_DIR}/riffty-java-runner.jar" ]; then
+  install -m 0644 "${TMP_DIR}/riffty-java-runner.jar" "${INSTALL_DIR}/riffty-java-runner.jar"
+fi
+if [ -f "${TMP_DIR}/riffty-java.sha256" ]; then
+  install -m 0644 "${TMP_DIR}/riffty-java.sha256" "${INSTALL_DIR}/riffty-java.sha256"
+fi
 
-echo "Installed riffty to ${INSTALL_DIR}/riffty"
+echo "Installed riffty (and companion binaries) to ${INSTALL_DIR}"
 case ":${PATH}:" in
   *":${INSTALL_DIR}:"*) ;;
   *) echo "Note: add ${INSTALL_DIR} to your PATH: export PATH=\"${INSTALL_DIR}:\$PATH\"" ;;
