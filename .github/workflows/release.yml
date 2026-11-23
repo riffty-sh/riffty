@@ -26,7 +26,7 @@ jobs:
           java-version: "25"
       - name: Build & test shaded riffty-java-runner.jar and SHA-256 manifest
         run: bash plugins/riffty-java/build.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: java-sidecar-jar
           path: |
@@ -116,7 +116,7 @@ jobs:
           Compress-Archive -Path java-staging/* -DestinationPath "dist/riffty-java-${{ matrix.target }}.zip"
           $javaHash = (Get-FileHash "dist/riffty-java-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower()
           "$javaHash  riffty-java-${{ matrix.target }}.zip" | Out-File -Encoding ascii "dist/riffty-java-${{ matrix.target }}.zip.sha256"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.target }}
           path: dist/*
