@@ -157,15 +157,15 @@ fn extract_zip_safe(archive_bytes: &[u8], dest_dir: &Path) -> Result<(), String>
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            "Expand-Archive -LiteralPath $env:RIFFTY_ZIP_SRC -DestinationPath $env:RIFFTY_ZIP_DST -Force",
+            "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory($env:RIFFTY_ZIP_SRC, $env:RIFFTY_ZIP_DST)",
         ])
         .env("RIFFTY_ZIP_SRC", &tmp_zip)
         .env("RIFFTY_ZIP_DST", dest_dir)
         .status()
-        .map_err(|e| format!("failed to invoke PowerShell Expand-Archive: {e}"))?;
+        .map_err(|e| format!("failed to invoke PowerShell ZipFile extraction: {e}"))?;
     let _ = fs::remove_file(&tmp_zip);
     if !status.success() {
-        return Err(format!("Expand-Archive failed with status {status}"));
+        return Err(format!("ZipFile extraction failed with status {status}"));
     }
     Ok(())
 }
