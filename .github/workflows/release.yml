@@ -60,7 +60,7 @@ jobs:
             os: ubuntu-24.04-arm
             ext: tar.gz
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-15
             ext: tar.gz
           - target: x86_64-apple-darwin
             os: macos-15-intel
@@ -87,7 +87,7 @@ jobs:
           SKIP_JAR_BUILD: "1"
         run: bash plugins/riffty-java/package_jlink_aot.sh
       - name: Build lean core release binaries
-        run: cargo build --release --locked --target ${{ matrix.target }} --bin riffty --bin riffty_mcp --bin riffty-ab
+        run: cargo build --release --target ${{ matrix.target }} --bin riffty --bin riffty_mcp --bin riffty-ab
       - name: Package Unix lean core + on-demand Java sidecar archives
         if: matrix.ext == 'tar.gz'
         shell: bash
@@ -202,7 +202,7 @@ jobs:
   verify-bundle-macos:
     name: Clean-Room Verify (macOS arm64 — Stripped env -i)
     needs: build-binaries
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
