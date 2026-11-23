@@ -888,3 +888,157 @@ target = ["src/infra/**", "next/**"]
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&repo);
 }
+
+#[test]
+fn e2e_rules_validate_detects_duplicates_and_accepts_clean_sugar_pack() {
+    let dir = create_temp_git_repo("rules_validate");
+    let base = dir.join("base.yml");
+    let child = dir.join("child.yml");
+    let dup = dir.join("dup.yml");
+
+    std::fs::write(
+        &base,
+        r#"
+pack: pydantic-v1-to-v2
+defaults:
+  language: python
+  severity: warning
+  applicability: safe
+  target_type: pydantic.BaseModel
+rename_methods:
+  dict: model_dump
+  json: model_dump_json
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &child,
+        r#"
+extends:
+  - base.yml
+rules:
+  - id: CUSTOM-001
+    name: custom-rule
+    message: "custom"
+    pattern: "old_fn($X)"
+    replace: "new_fn($X)"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &dup,
+        r#"
+rules:
+  - id: DUP-A
+    name: dup-a
+    message: "m1"
+    pattern: "foo($X)"
+    replace: "bar($X)"
+  - id: DUP-B
+    name: dup-b
+    message: "m2"
+    pattern: "foo($X)"
+    replace: "bar($X)"
+"#,
+    )
+    .unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_riffty");
+
+    let ok_out = Command::new(bin)
+        .args(["rules", "validate", child.to_str().unwrap()])
+        .output()
+        .expect("riffty rules validate child");
+    assert!(
+        ok_out.status.success(),
+        "expected exit 0, stderr: {}",
+        String::from_utf8_lossy(&ok_out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&ok_out.stdout);
+    assert!(
+        stdout.contains("OK (3 rules checked, 0 issues)"),
+        "got: {stdout}"
+    );
+
+    let fail_out = Command::new(bin)
+        .args(["rules", "validate", dup.to_str().unwrap()])
+        .output()
+        .expect("riffty rules validate dup");
+    assert_eq!(fail_out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&fail_out.stderr);
+    assert!(stderr.contains("DuplicatePattern"), "got: {stderr}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn e2e_cross_language_architecture_layers_and_cycles() {
+    let repo = create_temp_git_repo("cross_lang_arch");
+    std::fs::create_dir_all(repo.join("app/domain")).unwrap();
+    std::fs::create_dir_all(repo.join("app/infra")).unwrap();
+    std::fs::create_dir_all(repo.join("src/domain")).unwrap();
+    std::fs::create_dir_all(repo.join("src/infra")).unwrap();
+
+    std::fs::write(
+        repo.join("riffty.toml"),
+        r#"
+[architecture]
+forbid_cycles = true
+
+[[architecture.layers]]
+name = "domain"
+matches = ["app.domain.**", "src/domain/**"]
+may_access = []
+
+[[architecture.layers]]
+name = "infra"
+matches = ["app.infra.**", "src/infra/**"]
+may_access = ["domain"]
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        repo.join("app/domain/order.py"),
+        "from app.infra.db import save\n",
+    )
+    .unwrap();
+    std::fs::write(
+        repo.join("app/infra/db.py"),
+        "from app.domain.order import Order\n",
+    )
+    .unwrap();
+    std::fs::write(
+        repo.join("src/domain/user.ts"),
+        "import { repo } from '../infra/repo';\nexport const x = repo;\n",
+    )
+    .unwrap();
+    std::fs::write(repo.join("src/infra/repo.ts"), "export const repo = 1;\n").unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_riffty");
+    let out = Command::new(bin)
+        .args([
+            "check",
+            "--no-type-oracle",
+            "--format",
+            "json",
+            repo.to_str().unwrap(),
+        ])
+        .output()
+        .expect("riffty check --format json");
+    assert_eq!(out.status.code(), Some(1));
+
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid json report");
+    let diags = report["diagnostics"].as_array().unwrap();
+    let rule_ids: Vec<&str> = diags.iter().filter_map(|d| d["rule_id"].as_str()).collect();
+    assert!(
+        rule_ids.contains(&"ARCH-LAYER-DOMAIN"),
+        "expected ARCH-LAYER-DOMAIN, got: {diags:#?}"
+    );
+    assert!(
+        rule_ids.contains(&"ARCH-CYCLE-001"),
+        "expected ARCH-CYCLE-001, got: {diags:#?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&repo);
+}

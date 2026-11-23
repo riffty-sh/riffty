@@ -217,6 +217,7 @@ public final class JavaAnalyzerEngine {
         final Set<ClassTree> hoistedHttpFieldScheduled = Collections.newSetFromMap(new IdentityHashMap<>());
         final Map<ClassTree, Map<String, String>> hoistedPatternsByClass = new IdentityHashMap<>();
         final Map<ClassTree, Set<String>> usedFieldNamesByClass = new IdentityHashMap<>();
+        final Set<String> seenArchDiagKeys = new HashSet<>();
         boolean patternImportScheduled = false;
 
         UnitAnalyzer(
@@ -242,37 +243,125 @@ public final class JavaAnalyzerEngine {
         private void checkArchitectureImports() {
             if (archRules.isEmpty())
                 return;
+            for (ImportTree imp : cu.getImports()) {
+                String imported = imp.getQualifiedIdentifier().toString();
+                int start = (int) positions.getStartPosition(cu, imp);
+                int end = (int) positions.getEndPosition(cu, imp);
+                checkArchitectureTarget(imported, "import", start, end);
+            }
+        }
+
+        private void checkArchitectureTarget(String targetFqn, String refKind, int start, int end) {
+            if (archRules.isEmpty() || targetFqn == null || targetFqn.isEmpty())
+                return;
+            if (start < 0 || end < start)
+                return;
+            String normalizedTarget = normalizeTypeFqn(targetFqn);
+            if (!normalizedTarget.contains("."))
+                return;
             String pkgName = cu.getPackageName() != null ? cu.getPackageName().toString() : "";
             for (ArchForbidRule rule : archRules) {
                 if (!matchesPackageGlob(pkgName, rule.from()))
                     continue;
-                for (ImportTree imp : cu.getImports()) {
-                    String imported = imp.getQualifiedIdentifier().toString();
-                    for (String forbidden : rule.targets()) {
-                        if (matchesPackageGlob(imported, forbidden)) {
-                            int start = (int) positions.getStartPosition(cu, imp);
-                            int end = (int) positions.getEndPosition(cu, imp);
-                            if (start < 0 || end < start)
-                                continue;
-                            if (isLineSuppressed(start, rule.id()))
-                                continue;
-                            Map<String, Object> proof = new LinkedHashMap<>();
-                            proof.put("package", pkgName);
-                            proof.put("forbidden_import", imported);
-                            proof.put("rule_pattern", forbidden);
-                            diagnostics.add(makeDiag(
-                                    rule.id(),
-                                    "architecture-forbid",
-                                    "Error",
-                                    utf8.toByteOffset(start),
-                                    utf8.toByteOffset(end),
-                                    rule.message() + " (forbidden import `" + imported + "` in `" + pkgName + "`)",
-                                    proof,
-                                    null));
-                        }
+                for (String forbidden : rule.targets()) {
+                    if (matchesPackageGlob(normalizedTarget, forbidden)) {
+                        if (isLineSuppressed(start, rule.id()))
+                            continue;
+                        String dedupKey = rule.id() + ":" + start + ":" + end;
+                        if (!seenArchDiagKeys.add(dedupKey))
+                            continue;
+                        Map<String, Object> proof = new LinkedHashMap<>();
+                        proof.put("package", pkgName);
+                        proof.put("forbidden_target", normalizedTarget);
+                        proof.put("reference_kind", refKind);
+                        proof.put("rule_pattern", forbidden);
+                        diagnostics.add(makeDiag(
+                                rule.id(),
+                                "architecture-forbid",
+                                "Error",
+                                utf8.toByteOffset(start),
+                                utf8.toByteOffset(end),
+                                rule.message() + " (forbidden " + refKind + " `" + normalizedTarget + "` in `" + pkgName + "`)",
+                                proof,
+                                null));
                     }
                 }
             }
+        }
+
+        private static String normalizeTypeFqn(String raw) {
+            String s = raw.trim();
+            int lt = s.indexOf('<');
+            if (lt > 0) {
+                s = s.substring(0, lt);
+            }
+            while (s.endsWith("[]")) {
+                s = s.substring(0, s.length() - 2);
+            }
+            return s.trim();
+        }
+
+        private void checkTreeTypeForArchitecture(Tree typeNode, TreePath typePath, String refKind) {
+            if (archRules.isEmpty() || typeNode == null)
+                return;
+            int start = (int) positions.getStartPosition(cu, typeNode);
+            int end = (int) positions.getEndPosition(cu, typeNode);
+            String resolved = null;
+            if (typePath != null) {
+                TypeMirror tm = trees.getTypeMirror(typePath);
+                if (tm != null && tm.getKind() != TypeKind.ERROR && tm.getKind() != TypeKind.NONE) {
+                    resolved = tm.toString();
+                }
+            }
+            String rawText = typeNode.toString();
+            if (resolved != null && resolved.contains(".")) {
+                checkArchitectureTarget(resolved, refKind, start, end);
+            } else if (rawText.contains(".")) {
+                checkArchitectureTarget(rawText, refKind, start, end);
+            }
+        }
+
+        @Override
+        public Void visitClass(ClassTree node, Void unused) {
+            if (!archRules.isEmpty()) {
+                TreePath path = getCurrentPath();
+                Tree ext = node.getExtendsClause();
+                if (ext != null) {
+                    checkTreeTypeForArchitecture(ext, new TreePath(path, ext), "extends");
+                }
+                for (Tree impl : node.getImplementsClause()) {
+                    checkTreeTypeForArchitecture(impl, new TreePath(path, impl), "implements");
+                }
+            }
+            return super.visitClass(node, unused);
+        }
+
+        @Override
+        public Void visitVariable(VariableTree node, Void unused) {
+            if (!archRules.isEmpty() && node.getType() != null) {
+                checkTreeTypeForArchitecture(node.getType(), new TreePath(getCurrentPath(), node.getType()), "type-ref");
+            }
+            return super.visitVariable(node, unused);
+        }
+
+        @Override
+        public Void visitMethod(MethodTree node, Void unused) {
+            if (!archRules.isEmpty() && node.getReturnType() != null) {
+                checkTreeTypeForArchitecture(
+                        node.getReturnType(), new TreePath(getCurrentPath(), node.getReturnType()), "type-ref");
+            }
+            return super.visitMethod(node, unused);
+        }
+
+        @Override
+        public Void visitAnnotation(AnnotationTree node, Void unused) {
+            if (!archRules.isEmpty() && node.getAnnotationType() != null) {
+                checkTreeTypeForArchitecture(
+                        node.getAnnotationType(),
+                        new TreePath(getCurrentPath(), node.getAnnotationType()),
+                        "annotation");
+            }
+            return super.visitAnnotation(node, unused);
         }
 
         @Override
@@ -281,6 +370,13 @@ public final class JavaAnalyzerEngine {
             String simple = ident.contains(".") ? ident.substring(ident.lastIndexOf('.') + 1) : ident;
             int start = (int) positions.getStartPosition(cu, node);
             int end = (int) positions.getEndPosition(cu, node);
+
+            if (!archRules.isEmpty() && node.getIdentifier() != null) {
+                checkTreeTypeForArchitecture(
+                        node.getIdentifier(),
+                        new TreePath(getCurrentPath(), node.getIdentifier()),
+                        "new");
+            }
 
             if (start >= 0 && end >= start) {
                 switch (simple) {

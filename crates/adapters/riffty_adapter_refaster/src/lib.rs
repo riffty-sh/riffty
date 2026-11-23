@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use riffty_adapter_ast_grep::{AstGrepJavaAdapter, AstGrepJsTsAdapter};
@@ -25,11 +25,78 @@ fn intern_rule_id(id: &str) -> &'static str {
     leaked
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct PackDefaults {
+    #[serde(default)]
+    pub language: Option<Language>,
+    #[serde(default)]
+    pub severity: Option<YamlSeverity>,
+    #[serde(default)]
+    pub applicability: Option<YamlApplicability>,
+    #[serde(default)]
+    pub target_type: Option<String>,
+    #[serde(default)]
+    pub id_prefix: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct RawRefasterRuleSpec {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub language: Option<Language>,
+    #[serde(default)]
+    pub severity: Option<YamlSeverity>,
+    #[serde(default)]
+    pub applicability: Option<YamlApplicability>,
+    pub message: String,
+    pub pattern: String,
+    #[serde(default)]
+    pub guards: Vec<RefasterGuard>,
+    #[serde(default)]
+    pub replace: Option<String>,
+    #[serde(default)]
+    pub fix_title: Option<String>,
+    #[serde(default)]
+    pub imports: Vec<ImportSpec>,
+    #[serde(default)]
+    pub bind_impure_once: bool,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 enum YamlDocument {
-    Envelope { rules: Vec<RefasterRuleSpec> },
-    List(Vec<RefasterRuleSpec>),
+    Envelope {
+        #[serde(default)]
+        pack: Option<String>,
+        #[serde(default)]
+        extends: Vec<String>,
+        #[serde(default)]
+        defaults: PackDefaults,
+        #[serde(default)]
+        rename_methods: BTreeMap<String, String>,
+        #[serde(default)]
+        rename_imports: BTreeMap<String, String>,
+        #[serde(default)]
+        rules: Vec<RawRefasterRuleSpec>,
+    },
+    List(Vec<RawRefasterRuleSpec>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleValidationKind {
+    DuplicateId,
+    DuplicatePattern,
+    ConflictingReplacement,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuleValidationIssue {
+    pub kind: RuleValidationKind,
+    pub rule_id: String,
+    pub other_rule_id: Option<String>,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -204,12 +271,159 @@ impl RefasterYamlRule {
     }
 
     pub fn load_specs_from_str(yaml: &str) -> Result<Vec<RefasterRuleSpec>, String> {
+        let (specs, extends) = Self::parse_document(yaml)?;
+        if !extends.is_empty() {
+            return Err(
+                "Refaster YAML `extends` requires loading from a file path via `load_specs_from_file`"
+                    .to_string(),
+            );
+        }
+        Ok(specs)
+    }
+
+    fn parse_document(yaml: &str) -> Result<(Vec<RefasterRuleSpec>, Vec<String>), String> {
         let parsed: YamlDocument =
             serde_yaml_ng::from_str(yaml).map_err(|e| format!("invalid Refaster YAML: {e}"))?;
-        let specs = match parsed {
-            YamlDocument::Envelope { rules } => rules,
-            YamlDocument::List(rules) => rules,
+        let (pack, extends, defaults, rename_methods, rename_imports, raw_rules) = match parsed {
+            YamlDocument::Envelope {
+                pack,
+                extends,
+                defaults,
+                rename_methods,
+                rename_imports,
+                rules,
+            } => (
+                pack,
+                extends,
+                defaults,
+                rename_methods,
+                rename_imports,
+                rules,
+            ),
+            YamlDocument::List(rules) => (
+                None,
+                Vec::new(),
+                PackDefaults::default(),
+                BTreeMap::new(),
+                BTreeMap::new(),
+                rules,
+            ),
         };
+
+        let default_lang = defaults.language.unwrap_or_else(default_language);
+        let default_sev = defaults.severity.unwrap_or_else(default_severity);
+        let default_app = defaults.applicability.unwrap_or_else(default_applicability);
+        let prefix = defaults
+            .id_prefix
+            .as_deref()
+            .or(pack.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        let mut specs: Vec<RefasterRuleSpec> = Vec::new();
+
+        // 1. Desugar OpenRewrite-style `rename_methods` table into `RefasterRuleSpec`
+        for (old_method, new_method) in rename_methods {
+            let old_m = old_method.trim();
+            let new_m = new_method.trim();
+            if old_m.is_empty() || new_m.is_empty() {
+                return Err(
+                    "Refaster `rename_methods` entries must have non-empty old and new method names"
+                        .to_string(),
+                );
+            }
+            let slug = format!("{}-to-{}", old_m.replace('_', "-"), new_m.replace('_', "-"));
+            let id = match prefix {
+                Some(p) => format!("{p}/{slug}"),
+                None => format!("RFT-RENAME-METHOD-{slug}"),
+            };
+            let mut guards = Vec::new();
+            let target_desc = if let Some(ref ty) = defaults.target_type {
+                guards.push(RefasterGuard::TypeAssignableTo {
+                    target: "$TARGET".to_string(),
+                    expected_type: ty.clone(),
+                });
+                format!(" on `{ty}`")
+            } else {
+                String::new()
+            };
+            specs.push(RefasterRuleSpec {
+                id,
+                name: format!("rename-method-{slug}"),
+                language: default_lang,
+                severity: default_sev,
+                applicability: default_app,
+                message: format!("Deprecated method `.{old_m}()`{target_desc}; use `.{new_m}()`."),
+                pattern: format!("$TARGET.{old_m}($$$ARGS)"),
+                guards,
+                replace: Some(format!("$TARGET.{new_m}($$$ARGS)")),
+                fix_title: Some(format!("Migrate `.{old_m}(...)` to `.{new_m}(...)`")),
+                imports: Vec::new(),
+                bind_impure_once: false,
+            });
+        }
+
+        // 2. Desugar `rename_imports` table into `RefasterRuleSpec`
+        for (old_mod, new_mod) in rename_imports {
+            let old_m = old_mod.trim();
+            let new_m = new_mod.trim();
+            if old_m.is_empty() || new_m.is_empty() {
+                return Err(
+                    "Refaster `rename_imports` entries must have non-empty old and new import targets"
+                        .to_string(),
+                );
+            }
+            let slug = format!(
+                "{}-to-{}",
+                old_m.replace(['.', '/', '@', '_'], "-"),
+                new_m.replace(['.', '/', '@', '_'], "-")
+            );
+            let id = match prefix {
+                Some(p) => format!("{p}/import-{slug}"),
+                None => format!("RFT-RENAME-IMPORT-{slug}"),
+            };
+            let (pattern, replace) = match default_lang {
+                Language::Python => (format!("import {old_m}"), format!("import {new_m}")),
+                Language::Java => (format!("import {old_m};"), format!("import {new_m};")),
+                Language::JsTs => (
+                    format!("import $$$BINDINGS from '{old_m}'"),
+                    format!("import $$$BINDINGS from '{new_m}'"),
+                ),
+            };
+            specs.push(RefasterRuleSpec {
+                id,
+                name: format!("rename-import-{slug}"),
+                language: default_lang,
+                severity: default_sev,
+                applicability: default_app,
+                message: format!("Deprecated import `{old_m}`; migrate to `{new_m}`."),
+                pattern,
+                guards: Vec::new(),
+                replace: Some(replace),
+                fix_title: Some(format!("Migrate import `{old_m}` to `{new_m}`")),
+                imports: Vec::new(),
+                bind_impure_once: false,
+            });
+        }
+
+        // 3. Materialize explicit `rules` applying pack-level `defaults`
+        for raw in raw_rules {
+            specs.push(RefasterRuleSpec {
+                id: raw.id,
+                name: raw.name,
+                language: raw.language.unwrap_or(default_lang),
+                severity: raw.severity.unwrap_or(default_sev),
+                applicability: raw.applicability.unwrap_or(default_app),
+                message: raw.message,
+                pattern: raw.pattern,
+                guards: raw.guards,
+                replace: raw.replace,
+                fix_title: raw.fix_title,
+                imports: raw.imports,
+                bind_impure_once: raw.bind_impure_once,
+            });
+        }
+
         for spec in &specs {
             if spec.id.trim().is_empty() {
                 return Err("Refaster rule `id` must not be empty".to_string());
@@ -221,13 +435,44 @@ impl RefasterYamlRule {
                 ));
             }
         }
-        Ok(specs)
+        Ok((specs, extends))
+    }
+
+    fn load_specs_from_file_recursive(
+        path: &Path,
+        visiting: &mut HashSet<PathBuf>,
+    ) -> Result<Vec<RefasterRuleSpec>, String> {
+        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if !visiting.insert(canonical.clone()) {
+            return Err(format!(
+                "cyclic Refaster YAML `extends` detected at `{}`",
+                path.display()
+            ));
+        }
+
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read Refaster YAML `{}`: {e}", path.display()))?;
+        let (local_specs, extends) = Self::parse_document(&content)?;
+
+        let parent_dir = path.parent().unwrap_or_else(|| Path::new("."));
+        let mut combined = Vec::new();
+        for ext_rel in extends {
+            let ext_path = if Path::new(&ext_rel).is_absolute() {
+                PathBuf::from(&ext_rel)
+            } else {
+                parent_dir.join(&ext_rel)
+            };
+            let ext_specs = Self::load_specs_from_file_recursive(&ext_path, visiting)?;
+            combined.extend(ext_specs);
+        }
+        combined.extend(local_specs);
+        visiting.remove(&canonical);
+        Ok(combined)
     }
 
     pub fn load_specs_from_file(path: &Path) -> Result<Vec<RefasterRuleSpec>, String> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("failed to read Refaster YAML `{}`: {e}", path.display()))?;
-        Self::load_specs_from_str(&content)
+        let mut visiting = HashSet::new();
+        Self::load_specs_from_file_recursive(path, &mut visiting)
     }
 
     pub fn from_yaml_str(yaml: &str) -> Result<Vec<Box<dyn RulePlugin>>, String> {
@@ -251,18 +496,23 @@ impl RefasterYamlRule {
     }
 
     pub fn from_yaml_file(path: &Path) -> Result<Vec<Box<dyn RulePlugin>>, String> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("failed to read Refaster YAML `{}`: {e}", path.display()))?;
-        Self::from_yaml_str(&content)
+        let specs = Self::load_specs_from_file(path)?;
+        Ok(specs
+            .into_iter()
+            .map(|spec| Box::new(Self::new(spec)) as Box<dyn RulePlugin>)
+            .collect())
     }
 
     pub fn from_yaml_file_for_language(
         path: &Path,
         language: Language,
     ) -> Result<Vec<Box<dyn RulePlugin>>, String> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("failed to read Refaster YAML `{}`: {e}", path.display()))?;
-        Self::from_yaml_str_for_language(&content, language)
+        let specs = Self::load_specs_from_file(path)?;
+        Ok(specs
+            .into_iter()
+            .filter(|spec| spec.language == language)
+            .map(|spec| Box::new(Self::new(spec)) as Box<dyn RulePlugin>)
+            .collect())
     }
 
     pub fn jsts_rules_from_file(path: &Path) -> Result<Vec<Self>, String> {
@@ -300,6 +550,119 @@ impl RefasterYamlRule {
             .map(Self::new)
             .collect())
     }
+}
+
+fn normalize_pattern_signature(pattern: &str) -> String {
+    pattern.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn guards_signature(guards: &[RefasterGuard]) -> String {
+    serde_json::to_string(guards).unwrap_or_default()
+}
+
+/// Validates a collection of Refaster rule specs for duplicate IDs, duplicate
+/// `(language, normalized_pattern, guards)` signatures, and conflicting replacements.
+pub fn validate_rule_specs(specs: &[RefasterRuleSpec]) -> Vec<RuleValidationIssue> {
+    let mut issues = Vec::new();
+    let mut seen_ids: HashMap<String, usize> = HashMap::new();
+    let mut seen_sigs: HashMap<(Language, String, String), (String, Option<String>)> =
+        HashMap::new();
+
+    for (idx, spec) in specs.iter().enumerate() {
+        if let Some(&first_idx) = seen_ids.get(&spec.id) {
+            issues.push(RuleValidationIssue {
+                kind: RuleValidationKind::DuplicateId,
+                rule_id: spec.id.clone(),
+                other_rule_id: Some(specs[first_idx].id.clone()),
+                detail: format!(
+                    "Duplicate rule id `{}` (first seen at index {first_idx}, repeated at {idx})",
+                    spec.id
+                ),
+            });
+        } else {
+            seen_ids.insert(spec.id.clone(), idx);
+        }
+
+        let sig = (
+            spec.language,
+            normalize_pattern_signature(&spec.pattern),
+            guards_signature(&spec.guards),
+        );
+        let norm_replace = spec.replace.as_deref().map(normalize_pattern_signature);
+        if let Some((first_id, first_replace)) = seen_sigs.get(&sig) {
+            if first_id != &spec.id {
+                if first_replace != &norm_replace {
+                    issues.push(RuleValidationIssue {
+                        kind: RuleValidationKind::ConflictingReplacement,
+                        rule_id: spec.id.clone(),
+                        other_rule_id: Some(first_id.clone()),
+                        detail: format!(
+                            "Rule `{}` conflicts with `{}` on identical ({}, pattern, guards) with different replacements",
+                            spec.id,
+                            first_id,
+                            spec.language.as_str()
+                        ),
+                    });
+                } else {
+                    issues.push(RuleValidationIssue {
+                        kind: RuleValidationKind::DuplicatePattern,
+                        rule_id: spec.id.clone(),
+                        other_rule_id: Some(first_id.clone()),
+                        detail: format!(
+                            "Rule `{}` duplicates `{}` with identical ({}, pattern, guards)",
+                            spec.id,
+                            first_id,
+                            spec.language.as_str()
+                        ),
+                    });
+                }
+            }
+        } else {
+            seen_sigs.insert(sig, (spec.id.clone(), norm_replace));
+        }
+    }
+
+    issues
+}
+
+/// Loads all `.yml`/`.yaml` files from the provided file/directory paths and validates them.
+pub fn validate_yaml_paths(paths: &[PathBuf]) -> Result<(usize, Vec<RuleValidationIssue>), String> {
+    let mut yaml_files: Vec<PathBuf> = Vec::new();
+    for p in paths {
+        collect_yaml_files(p, &mut yaml_files)?;
+    }
+    yaml_files.sort();
+    let mut all_specs = Vec::new();
+    for file in &yaml_files {
+        let specs = RefasterYamlRule::load_specs_from_file(file)?;
+        all_specs.extend(specs);
+    }
+    let issues = validate_rule_specs(&all_specs);
+    Ok((all_specs.len(), issues))
+}
+
+fn collect_yaml_files(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    if path.is_file() {
+        out.push(path.to_path_buf());
+        return Ok(());
+    }
+    if path.is_dir() {
+        let entries = std::fs::read_dir(path)
+            .map_err(|e| format!("failed to read directory `{}`: {e}", path.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("failed to read entry: {e}"))?;
+            let p = entry.path();
+            if p.is_dir() {
+                collect_yaml_files(&p, out)?;
+            } else if p.extension().and_then(|e| e.to_str()).is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("yml") || ext.eq_ignore_ascii_case("yaml")
+            }) {
+                out.push(p);
+            }
+        }
+        return Ok(());
+    }
+    Err(format!("path does not exist: `{}`", path.display()))
 }
 
 /// Evaluates `language: java` Refaster YAML rules against a single Java source file
@@ -1615,6 +1978,145 @@ rules:
             out.files[1]
                 .final_source
                 .contains("<span>{Number.isNaN(n)}</span>")
+        );
+    }
+
+    #[test]
+    fn desugars_pack_defaults_rename_methods_and_rename_imports() {
+        let yaml = r#"
+pack: pydantic-v1-to-v2
+defaults:
+  language: python
+  severity: warning
+  applicability: safe
+  target_type: pydantic.BaseModel
+rename_methods:
+  dict: model_dump
+  parse_obj: model_validate
+rename_imports:
+  legacy_sdk.v1: company_sdk.v2
+"#;
+        let specs = RefasterYamlRule::load_specs_from_str(yaml).expect("parse sugar yaml");
+        assert_eq!(specs.len(), 3);
+
+        let dict_rule = specs
+            .iter()
+            .find(|s| s.id == "pydantic-v1-to-v2/dict-to-model-dump")
+            .expect("dict rename rule");
+        assert_eq!(dict_rule.pattern, "$TARGET.dict($$$ARGS)");
+        assert_eq!(
+            dict_rule.replace.as_deref(),
+            Some("$TARGET.model_dump($$$ARGS)")
+        );
+        assert_eq!(dict_rule.guards.len(), 1);
+
+        let imp_rule = specs
+            .iter()
+            .find(|s| s.id.contains("import-legacy-sdk-v1"))
+            .expect("import rename rule");
+        assert_eq!(imp_rule.pattern, "import legacy_sdk.v1");
+        assert_eq!(imp_rule.replace.as_deref(), Some("import company_sdk.v2"));
+    }
+
+    #[test]
+    fn extends_loads_parent_pack_and_detects_cycles() {
+        let dir =
+            std::env::temp_dir().join(format!("riffty_refaster_extends_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let base = dir.join("base.yml");
+        let child = dir.join("child.yml");
+        std::fs::write(
+            &base,
+            r#"
+pack: base-pack
+defaults:
+  language: jsts
+rename_methods:
+  createChatCompletion: chat.completions.create
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &child,
+            r#"
+extends:
+  - base.yml
+rules:
+  - id: CHILD-001
+    name: child-rule
+    language: jsts
+    message: "child rule"
+    pattern: "$X === NaN"
+    replace: "Number.isNaN($X)"
+"#,
+        )
+        .unwrap();
+
+        let specs = RefasterYamlRule::load_specs_from_file(&child).expect("load child");
+        assert_eq!(specs.len(), 2);
+        assert_eq!(
+            specs[0].id,
+            "base-pack/createChatCompletion-to-chat.completions.create"
+        );
+        assert_eq!(specs[1].id, "CHILD-001");
+
+        // Cyclic extends must fail cleanly
+        let cyc_a = dir.join("cyc_a.yml");
+        let cyc_b = dir.join("cyc_b.yml");
+        std::fs::write(&cyc_a, "extends:\n  - cyc_b.yml\nrules: []\n").unwrap();
+        std::fs::write(&cyc_b, "extends:\n  - cyc_a.yml\nrules: []\n").unwrap();
+        let err = RefasterYamlRule::load_specs_from_file(&cyc_a).unwrap_err();
+        assert!(err.contains("cyclic"), "got: {err}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_rule_specs_detects_duplicate_ids_patterns_and_conflicts() {
+        let yaml = r#"
+rules:
+  - id: DUP-1
+    name: first
+    message: "m1"
+    pattern: "$X.dict($$$ARGS)"
+    replace: "$X.model_dump($$$ARGS)"
+  - id: DUP-1
+    name: dup-id
+    message: "m2"
+    pattern: "$Y.foo()"
+    replace: "$Y.bar()"
+  - id: DUP-PAT
+    name: dup-pattern
+    message: "m3"
+    pattern: "$X.dict($$$ARGS)"
+    replace: "$X.model_dump($$$ARGS)"
+  - id: CONFLICT-PAT
+    name: conflict-pattern
+    message: "m4"
+    pattern: "$X.dict($$$ARGS)"
+    replace: "$X.to_dict($$$ARGS)"
+"#;
+        let specs = RefasterYamlRule::load_specs_from_str(yaml).unwrap();
+        let issues = validate_rule_specs(&specs);
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.kind == RuleValidationKind::DuplicateId),
+            "got: {issues:#?}"
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.kind == RuleValidationKind::DuplicatePattern),
+            "got: {issues:#?}"
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.kind == RuleValidationKind::ConflictingReplacement),
+            "got: {issues:#?}"
         );
     }
 }

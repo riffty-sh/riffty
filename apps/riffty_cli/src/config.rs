@@ -1,5 +1,6 @@
 use riffty_adapter_plugin::ArchitectureForbidRule;
 use riffty_adapter_tsrs::JsTsArchitectureForbidRule;
+use riffty_core::architecture::{ArchForbidRule, ArchLayer, ArchitectureConfig};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -7,6 +8,9 @@ use std::path::{Path, PathBuf};
 #[serde(default)]
 pub struct ArchitectureTomlConfig {
     pub forbid: Vec<ArchitectureForbidRule>,
+    pub layers: Vec<ArchLayer>,
+    pub forbid_cycles: bool,
+    pub cycle_slice_depth: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -19,12 +23,21 @@ pub struct JavaTomlConfig {
 #[serde(default)]
 pub struct JsTsArchitectureTomlConfig {
     pub forbid: Vec<JsTsArchitectureForbidRule>,
+    pub layers: Vec<ArchLayer>,
+    pub forbid_cycles: bool,
+    pub cycle_slice_depth: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct JsTsTomlConfig {
     pub architecture: JsTsArchitectureTomlConfig,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct PythonTomlConfig {
+    pub architecture: ArchitectureConfig,
 }
 
 /// Optional TOML configuration loaded from `riffty.toml` or `[tool.riffty]` in `pyproject.toml`.
@@ -34,8 +47,54 @@ pub struct RifftyTomlConfig {
     pub rules: Option<PathBuf>,
     pub python_venv: Option<PathBuf>,
     pub exclude: Vec<String>,
+    pub architecture: ArchitectureConfig,
     pub java: JavaTomlConfig,
     pub jsts: JsTsTomlConfig,
+    pub python: PythonTomlConfig,
+}
+
+impl RifftyTomlConfig {
+    /// Combines top-level `[architecture]` with `[python.architecture]`, `[java.architecture]`
+    /// (`layers`/`forbid_cycles`), and `[jsts.architecture]` (`layers`/`forbid_cycles`) into a
+    /// unified cross-language `ArchitectureConfig`.
+    ///
+    /// Note: `java.architecture.forbid` and `jsts.architecture.forbid` continue to run in their
+    /// native semantic analyzers as well; top-level `[architecture]` and `[python.architecture]`
+    /// run through the shared Rust evaluator.
+    pub fn merged_architecture_config(&self) -> ArchitectureConfig {
+        let mut merged = self.architecture.clone();
+        merged
+            .forbid
+            .extend(self.python.architecture.forbid.clone());
+        merged
+            .layers
+            .extend(self.python.architecture.layers.clone());
+        merged.layers.extend(self.java.architecture.layers.clone());
+        merged.layers.extend(self.jsts.architecture.layers.clone());
+        merged.forbid_cycles = merged.forbid_cycles
+            || self.python.architecture.forbid_cycles
+            || self.java.architecture.forbid_cycles
+            || self.jsts.architecture.forbid_cycles;
+        if merged.cycle_slice_depth.is_none() {
+            merged.cycle_slice_depth = self
+                .python
+                .architecture
+                .cycle_slice_depth
+                .or(self.java.architecture.cycle_slice_depth)
+                .or(self.jsts.architecture.cycle_slice_depth);
+        }
+        // Also mirror java forbid rules when running in Java Tier 1 fallback mode
+        // (deduplicated against Tier 2 diagnostics by file_id + range + rule_id).
+        for jf in &self.java.architecture.forbid {
+            merged.forbid.push(ArchForbidRule {
+                id: jf.id.clone(),
+                from: jf.from.clone(),
+                target: jf.target.clone(),
+                message: Some(jf.message.clone()),
+            });
+        }
+        merged
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -204,6 +263,38 @@ exclude = ["build/"]
             cli_venv.or(toml_cfg.python_venv),
             Some(PathBuf::from("toml_venv"))
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn loads_cross_language_architecture_layers_and_cycles() {
+        let dir = make_temp_dir("arch_cfg");
+        std::fs::write(
+            dir.join("riffty.toml"),
+            r#"
+[architecture]
+forbid_cycles = true
+
+[[architecture.layers]]
+name = "domain"
+matches = ["com.acme.domain.**", "app.domain.**"]
+may_access = []
+
+[[architecture.layers]]
+name = "infra"
+matches = ["com.acme.infra.**", "app.infra.**"]
+may_access = ["domain"]
+"#,
+        )
+        .unwrap();
+
+        let cfg = RifftyTomlConfig::discover(&dir).unwrap();
+        let merged = cfg.merged_architecture_config();
+        assert!(merged.forbid_cycles);
+        assert_eq!(merged.layers.len(), 2);
+        assert_eq!(merged.layers[0].name, "domain");
+        assert_eq!(merged.layers[1].may_access, vec!["domain".to_string()]);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

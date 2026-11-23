@@ -16,7 +16,7 @@ use riffty_adapter_java_fast::JavaFastAnalyzer;
 use riffty_adapter_plugin::{
     JavaPluginAdapter, discover_java_sidecar_bundle, hydrate_java_sidecar,
 };
-use riffty_adapter_refaster::{JavaRefasterAnalyzer, RefasterYamlRule};
+use riffty_adapter_refaster::{JavaRefasterAnalyzer, RefasterYamlRule, validate_yaml_paths};
 use riffty_adapter_ruff_ast::{RuffAstAdapter, RuffImportAdapter};
 use riffty_adapter_tsrs::TsrsSemanticAnalyzer;
 use riffty_adapter_ty::{NullTypeOracle, TyOracleAdapter};
@@ -26,7 +26,8 @@ use riffty_core::{
 };
 use riffty_pipeline::{
     AnalyzerRegistry, AppliedFixRecord, DEFAULT_MAX_FIXPOINT_PASSES, PipelineConfig,
-    PythonLanguageAnalyzer, RifftyEngine, WorkspaceOrchestrator, render_unified_diff,
+    PythonLanguageAnalyzer, RifftyEngine, WorkspaceOrchestrator, evaluate_workspace_architecture,
+    render_unified_diff,
 };
 use riffty_rules_builtin::builtin_rules;
 use serde::Serialize;
@@ -58,6 +59,24 @@ enum Commands {
     Infra(infra_cmd::InfraArgs),
     /// Manage on-demand verified language plugins (`install`, `status`, `clean`)
     Plugin(plugin_cmd::PluginArgs),
+    /// Validate declarative Refaster YAML rule packs for duplicates and conflicts
+    Rules(RulesArgs),
+}
+
+#[derive(Debug, clap::Args)]
+struct RulesArgs {
+    #[command(subcommand)]
+    command: RulesCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum RulesCommand {
+    /// Validate one or more Refaster YAML files or directories for duplicate IDs and overlapping patterns
+    Validate {
+        /// YAML rule files or directories to validate
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -297,6 +316,29 @@ async fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        Commands::Rules(args) => match args.command {
+            RulesCommand::Validate { paths } => match validate_yaml_paths(&paths) {
+                Ok((count, issues)) => {
+                    if issues.is_empty() {
+                        println!("riffty rules validate: OK ({count} rules checked, 0 issues)");
+                        ExitCode::SUCCESS
+                    } else {
+                        for issue in &issues {
+                            eprintln!("[{:?}] {}: {}", issue.kind, issue.rule_id, issue.detail);
+                        }
+                        eprintln!(
+                            "riffty rules validate: FAILED ({count} rules checked, {} issue(s))",
+                            issues.len()
+                        );
+                        ExitCode::from(1)
+                    }
+                }
+                Err(err) => {
+                    eprintln!("riffty rules validate error: {err}");
+                    ExitCode::from(2)
+                }
+            },
+        },
     }
 }
 
@@ -304,8 +346,8 @@ fn run_check(args: CheckArgs) -> Result<bool, String> {
     let resolved_ws = WorkspaceResolver::resolve(&args.path);
     let workspace_root_dir: &Path = &resolved_ws.root;
     let toml_cfg = RifftyTomlConfig::discover(workspace_root_dir)?;
-    let effective_python_venv = args.python_venv.or(toml_cfg.python_venv);
-    let effective_rules = args.rules.or(toml_cfg.rules);
+    let effective_python_venv = args.python_venv.or_else(|| toml_cfg.python_venv.clone());
+    let effective_rules = args.rules.or_else(|| toml_cfg.rules.clone());
 
     let fs_adapter = FsWorkspaceAdapter;
     let parser = RuffAstAdapter;
@@ -466,7 +508,7 @@ fn run_check(args: CheckArgs) -> Result<bool, String> {
     let orchestrator = WorkspaceOrchestrator {
         registry: &registry,
     };
-    let run_output = orchestrator.run(
+    let mut run_output = orchestrator.run(
         workspace_root_dir,
         &workspace_files,
         &rules_paths,
@@ -477,6 +519,31 @@ fn run_check(args: CheckArgs) -> Result<bool, String> {
         },
         scoped_ranges.as_ref(),
     )?;
+
+    let arch_cfg = toml_cfg.merged_architecture_config();
+    if !arch_cfg.is_empty() {
+        let arch_diags = evaluate_workspace_architecture(&arch_cfg, &workspace_files, &[]);
+        if !arch_diags.is_empty() {
+            let mut by_file: HashMap<FileId, Vec<riffty_core::Diagnostic>> = HashMap::new();
+            for d in arch_diags {
+                by_file.entry(d.file_id).or_default().push(d);
+            }
+            for res in &mut run_output.files {
+                if let Some(extra) = by_file.remove(&res.file_id) {
+                    for d in extra {
+                        let already = res.remaining_diagnostics.iter().any(|existing| {
+                            existing.rule_id == d.rule_id
+                                && existing.range.start == d.range.start
+                                && existing.range.end == d.range.end
+                        });
+                        if !already {
+                            res.remaining_diagnostics.push(d);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     let id_to_file: HashMap<FileId, (&Path, &str)> = workspace_files
         .iter()

@@ -1186,4 +1186,60 @@ class SizeValidator {
             Applicability::ManualOnly
         );
     }
+
+    #[test]
+    fn java_tier2_catches_fqn_architecture_violation_without_import() {
+        let Some(bundle) = discover_java_sidecar_bundle() else {
+            return;
+        };
+        let adapter = JavaPluginAdapter {
+            bundle,
+            extra_classpath: Vec::new(),
+            use_daemon: false,
+            daemon_socket: None,
+            architecture_forbid: vec![ArchitectureForbidRule {
+                id: "ARCH-NO-INFRA-FQN".to_string(),
+                from: "com.acme.domain.**".to_string(),
+                target: vec!["com.acme.infra.**".to_string()],
+                message: "Domain must not reference infra".to_string(),
+            }],
+            allow_build_tool: false,
+        };
+
+        let src = r#"package com.acme.domain.order;
+
+class OrderService {
+    void save() {
+        Object client = new com.acme.infra.DbClient();
+        System.out.println(client);
+    }
+}
+"#;
+        let files = vec![WorkspaceFile {
+            file_id: FileId(1),
+            path: PathBuf::from("OrderService.java"),
+            relative_path: "OrderService.java".to_string(),
+            source: src.to_string(),
+        }];
+
+        let resp = adapter
+            .analyze_pass(&AnalyzePassRequest {
+                workspace_root: Path::new("."),
+                files: &files,
+                scoped_ranges: None,
+                rules_paths: &[],
+                allow_unsafe: false,
+                pass_index: 0,
+            })
+            .expect("Tier 2 javac sidecar should succeed");
+
+        assert!(
+            resp.diagnostics
+                .iter()
+                .any(|d| d.rule_id == "ARCH-NO-INFRA-FQN"
+                    && d.message.contains("com.acme.infra.DbClient")),
+            "Expected FQN architecture violation, got: {:#?}",
+            resp.diagnostics
+        );
+    }
 }

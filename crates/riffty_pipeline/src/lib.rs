@@ -1,7 +1,10 @@
+pub mod architecture;
 pub mod orchestrator;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+
+pub use architecture::evaluate_workspace_architecture;
 
 pub use orchestrator::{
     AnalyzerRegistry, PythonLanguageAnalyzer, WorkspaceOrchestrator, WorkspaceRunOutput,

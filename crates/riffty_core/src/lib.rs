@@ -1,3 +1,4 @@
+pub mod architecture;
 pub mod ports;
 
 use std::collections::HashMap;
