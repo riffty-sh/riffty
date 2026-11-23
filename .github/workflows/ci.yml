@@ -19,16 +19,33 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - name: Check Rust Formatting Gate
-        run: cargo fmt --all -- --check
-      - name: Build & Test Java Sidecar Runner (Error Prone + Picnic)
-        run: bash plugins/riffty-java/build.sh
-      - name: Run Workspace Test Suite (Zero Warnings Gate)
-        env:
-          RUSTFLAGS: "-D warnings"
-        run: cargo test --workspace
-      - name: Run Clippy All-Targets Strict Gate
-        run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Run Boule 95% Affirmation Traceability Gate
-        run: node scripts/affirmation-tracer.mjs audit
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Run Unified Verification Pipeline (Build/CI Parity)
+        run: bash scripts/verify-all.sh
 
+  docker-smoke:
+    name: Docker Pre-Hydrated Clean-Room Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build pre-hydrated riffty Docker image
+        run: docker build -t riffty:ci-smoke .
+      - name: Verify Python, JS/TS, and Java Tier 2 inside container (zero host setup)
+        run: |
+          mkdir -p /tmp/riffty-docker-smoke
+          printf 'async def f(): pass\ndef g(): f()\n' > /tmp/riffty-docker-smoke/app.py
+          printf 'export const x = [3, 1, 2].sort();\n' > /tmp/riffty-docker-smoke/app.ts
+          printf '{"compilerOptions":{"strict":true}}\n' > /tmp/riffty-docker-smoke/tsconfig.json
+          printf 'import java.math.BigDecimal;\nclass App { BigDecimal x = new BigDecimal(0.1); }\n' > /tmp/riffty-docker-smoke/App.java
+          docker run --rm -v /tmp/riffty-docker-smoke:/repo riffty:ci-smoke --version
+          docker run --rm --entrypoint riffty-ab riffty:ci-smoke --version
+          docker run --rm -v /tmp/riffty-docker-smoke:/repo riffty:ci-smoke plugin status
+          rc=0
+          docker run --rm -v /tmp/riffty-docker-smoke:/repo riffty:ci-smoke check --require-tier2 --fix --dry-run --summary . || rc=$?
+          if [ "$rc" -ge 2 ]; then
+            echo "ERROR: Docker smoke test failed with fatal exit code $rc" >&2
+            exit "$rc"
+          fi

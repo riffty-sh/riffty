@@ -1,3 +1,10 @@
+pub mod hydrate;
+
+pub use hydrate::{
+    cached_java_sidecar_dir, clean_java_sidecar_cache, current_target_triple, hydrate_java_sidecar,
+    riffty_cache_dir,
+};
+
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -44,6 +51,23 @@ pub struct JavaPluginAdapter {
 /// optional Project Leyden `riffty-java.aot`, and their pinned SHA-256 manifests.
 pub fn discover_java_sidecar_bundle() -> Option<JavaSidecarBundle> {
     let runner_jar = discover_runner_jar()?;
+    discover_java_sidecar_bundle_from_jar(runner_jar)
+}
+
+/// Discovers a `JavaSidecarBundle` rooted at a specific directory (used by on-demand hydration).
+pub fn discover_java_sidecar_bundle_at(dir: &Path) -> Option<JavaSidecarBundle> {
+    let direct = dir.join("riffty-java-runner.jar");
+    if direct.is_file() {
+        return discover_java_sidecar_bundle_from_jar(direct);
+    }
+    let nested = dir.join("riffty-java/riffty-java-runner.jar");
+    if nested.is_file() {
+        return discover_java_sidecar_bundle_from_jar(nested);
+    }
+    None
+}
+
+fn discover_java_sidecar_bundle_from_jar(runner_jar: PathBuf) -> Option<JavaSidecarBundle> {
     let sha_path = runner_jar.with_file_name("riffty-java.sha256");
     let expected_sha256 = fs::read_to_string(&sha_path)
         .ok()?
@@ -160,6 +184,16 @@ fn discover_runner_jar() -> Option<PathBuf> {
             if direct.is_file() {
                 return Some(direct);
             }
+        }
+    }
+    if let Some(cache_dir) = cached_java_sidecar_dir(env!("CARGO_PKG_VERSION")) {
+        let cached = cache_dir.join("riffty-java-runner.jar");
+        if cached.is_file() {
+            return Some(cached);
+        }
+        let nested = cache_dir.join("riffty-java/riffty-java-runner.jar");
+        if nested.is_file() {
+            return Some(nested);
         }
     }
     None

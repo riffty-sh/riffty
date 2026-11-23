@@ -5,6 +5,18 @@ All notable changes to `riffty` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-23
+
+### Added
+- **On-Demand Verified Plugin Hydration (`riffty_adapter_plugin::hydrate`, `riffty plugin`)**:
+  - Core install (`riffty`, `riffty_mcp`, `riffty-ab`) is now a lean pure-Rust bundle (~15–20 MB) with Python (Tier 1+2), JS/TS (Tier 1+2), and Java (Tier 1) built in.
+  - On first `.java` scan (unless `--offline` / `RIFFTY_OFFLINE=1`), `riffty` automatically downloads `riffty-java-<target>.tar.gz` (self-contained `jlink` JDK 25 + Leyden AOT + Error Prone/Picnic), verifies its SHA-256 checksum before extraction, and atomically caches it in `~/.cache/riffty/plugins/riffty-java/v<version>/`.
+  - Added `riffty plugin install java`, `riffty plugin status`, `riffty plugin clean`, and `riffty check --offline` (`RIFFTY_OFFLINE`) for air-gapped CI workflows.
+- **Supply-Chain Hardening & Clean-Room Release Verification**:
+  - `scripts/install.sh` and `scripts/install.ps1` now verify `.sha256` checksums before extracting.
+  - `release.yml` builds Linux `x86_64` on `ubuntu-22.04` (glibc 2.35 compatibility), adds `aarch64-unknown-linux-gnu` (ARM64 Linux), gates publishing behind pre-release `verify-bundle-linux` (bare `debian:bookworm-slim`) and `verify-bundle-macos` (`env -i`) clean-room jobs, emits a CycloneDX SBOM + SLSA Build Provenance (`actions/attest-build-provenance@v2`), and publishes the pre-hydrated Docker image to `ghcr.io/riffty-sh/riffty`.
+  - Added `scripts/verify-all.sh` (Build/CI parity) and `docker-smoke` CI job.
+
 ## [0.3.1] - 2026-11-23
 
 ### Changed

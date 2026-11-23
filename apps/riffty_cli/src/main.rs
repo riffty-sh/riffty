@@ -5,6 +5,7 @@ use std::process::ExitCode;
 mod commands;
 mod config;
 mod infra_cmd;
+mod plugin_cmd;
 mod sarif;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -12,7 +13,9 @@ use config::{RifftyTomlConfig, is_excluded};
 use riffty_adapter_ast_grep::AstGrepAdapter;
 use riffty_adapter_fs::{FsWorkspaceAdapter, WorkspaceResolver};
 use riffty_adapter_java_fast::JavaFastAnalyzer;
-use riffty_adapter_plugin::{JavaPluginAdapter, discover_java_sidecar_bundle};
+use riffty_adapter_plugin::{
+    JavaPluginAdapter, discover_java_sidecar_bundle, hydrate_java_sidecar,
+};
 use riffty_adapter_refaster::{JavaRefasterAnalyzer, RefasterYamlRule};
 use riffty_adapter_ruff_ast::{RuffAstAdapter, RuffImportAdapter};
 use riffty_adapter_tsrs::TsrsSemanticAnalyzer;
@@ -53,6 +56,8 @@ enum Commands {
     Efficiency(infra_cmd::EfficiencyArgs),
     /// Inspect registered infrastructure intelligence provider plugins and runtime health
     Infra(infra_cmd::InfraArgs),
+    /// Manage on-demand verified language plugins (`install`, `status`, `clean`)
+    Plugin(plugin_cmd::PluginArgs),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -119,6 +124,10 @@ struct CheckArgs {
     /// Disable semantic type oracle (`NullTypeOracle` syntactic-only fallback)
     #[arg(long)]
     no_type_oracle: bool,
+
+    /// Disable on-demand network hydration of missing language plugins (air-gapped mode)
+    #[arg(long, env = "RIFFTY_OFFLINE")]
+    offline: bool,
 
     /// Force zero-JVM Java Tier 1 (`tree-sitter-java`) even if Tier 2 `riffty-java` is available
     #[arg(long)]
@@ -281,6 +290,13 @@ async fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        Commands::Plugin(args) => match plugin_cmd::run_plugin(args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("riffty plugin error: {err}");
+                ExitCode::from(2)
+            }
+        },
     }
 }
 
@@ -338,9 +354,41 @@ fn run_check(args: CheckArgs) -> Result<bool, String> {
         runtime_detail: py_detail,
     });
 
-    if !args.java_tier1_only
-        && let Some(bundle) = discover_java_sidecar_bundle()
-    {
+    let mut all_extensions: Vec<&'static str> = vec!["py", "java"];
+    all_extensions.extend_from_slice(Language::JSTS_EXTENSIONS);
+    let mut workspace_files = fs_adapter.discover_files(&args.path, &all_extensions)?;
+    if !toml_cfg.exclude.is_empty() {
+        workspace_files.retain(|wf| !is_excluded(&wf.relative_path, &toml_cfg.exclude));
+    }
+    let has_java_files = workspace_files
+        .iter()
+        .any(|wf| wf.relative_path.ends_with(".java"));
+
+    let resolved_java_bundle = if !args.java_tier1_only && has_java_files {
+        match discover_java_sidecar_bundle() {
+            Some(bundle) => Some(bundle),
+            None if !args.offline => {
+                let version = env!("CARGO_PKG_VERSION");
+                eprintln!(
+                    "riffty: Java files detected — hydrating verified riffty-java v{version} runtime (one-time)..."
+                );
+                match hydrate_java_sidecar(version, false) {
+                    Ok(bundle) => Some(bundle),
+                    Err(err) => {
+                        eprintln!(
+                            "riffty: warning: failed to hydrate riffty-java v{version} ({err}); falling back to Tier 1"
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    if let Some(bundle) = resolved_java_bundle {
         let extra_classpath: Vec<String> = args
             .java_classpath
             .as_deref()
@@ -374,12 +422,6 @@ fn run_check(args: CheckArgs) -> Result<bool, String> {
         tier1_only: args.no_type_oracle,
         architecture_forbid: toml_cfg.jsts.architecture.forbid.clone(),
     });
-
-    let extensions = registry.supported_extensions();
-    let mut workspace_files = fs_adapter.discover_files(&args.path, &extensions)?;
-    if !toml_cfg.exclude.is_empty() {
-        workspace_files.retain(|wf| !is_excluded(&wf.relative_path, &toml_cfg.exclude));
-    }
 
     let scoped_ranges = if args.diff {
         let diff_target = if let Some(base_ref) = &args.base_ref {

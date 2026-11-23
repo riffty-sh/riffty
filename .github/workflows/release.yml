@@ -7,6 +7,9 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+  packages: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,7 +24,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - name: Build shaded riffty-java-runner.jar and SHA-256 manifest
+      - name: Build & test shaded riffty-java-runner.jar and SHA-256 manifest
         run: bash plugins/riffty-java/build.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -31,7 +34,7 @@ jobs:
             plugins/riffty-java/dist/riffty-java.sha256
 
   build-binaries:
-    name: Build Self-Contained Bundle (${{ matrix.target }})
+    name: Build Core + On-Demand Java Sidecar (${{ matrix.target }})
     needs: build-java-sidecar-jar
     runs-on: ${{ matrix.os }}
     strategy:
@@ -39,7 +42,10 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
+            ext: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
             ext: tar.gz
           - target: aarch64-apple-darwin
             os: macos-14
@@ -68,45 +74,148 @@ jobs:
         env:
           SKIP_JAR_BUILD: "1"
         run: bash plugins/riffty-java/package_jlink_aot.sh
-      - name: Build release binaries
+      - name: Build lean core release binaries
         run: cargo build --release --locked --target ${{ matrix.target }} --bin riffty --bin riffty_mcp --bin riffty-ab
-      - name: Package Unix archive (zero-external-setup bundle)
+      - name: Package Unix lean core + on-demand Java sidecar archives
         if: matrix.ext == 'tar.gz'
         shell: bash
         run: |
-          mkdir -p dist staging/riffty-java
-          cp "target/${{ matrix.target }}/release/riffty" staging/
-          cp "target/${{ matrix.target }}/release/riffty_mcp" staging/
-          cp "target/${{ matrix.target }}/release/riffty-ab" staging/
-          cp -R plugins/riffty-java/dist/. staging/riffty-java/
-          cp LICENSE README.md staging/
-          tar -C staging -czf "dist/riffty-${{ matrix.target }}.tar.gz" .
-          if command -v sha256sum >/dev/null 2>&1; then
-            (cd dist && sha256sum "riffty-${{ matrix.target }}.tar.gz" > "riffty-${{ matrix.target }}.tar.gz.sha256")
-          else
-            (cd dist && shasum -a 256 "riffty-${{ matrix.target }}.tar.gz" > "riffty-${{ matrix.target }}.tar.gz.sha256")
-          fi
-      - name: Package Windows archive (zero-external-setup bundle)
+          mkdir -p dist core-staging java-staging
+          cp "target/${{ matrix.target }}/release/riffty" core-staging/
+          cp "target/${{ matrix.target }}/release/riffty_mcp" core-staging/
+          cp "target/${{ matrix.target }}/release/riffty-ab" core-staging/
+          cp LICENSE README.md core-staging/
+          tar -C core-staging -czf "dist/riffty-${{ matrix.target }}.tar.gz" .
+
+          cp -R plugins/riffty-java/dist/. java-staging/
+          tar -C java-staging -czf "dist/riffty-java-${{ matrix.target }}.tar.gz" .
+
+          hash_file() {
+            if command -v sha256sum >/dev/null 2>&1; then
+              (cd dist && sha256sum "$1" > "$1.sha256")
+            else
+              (cd dist && shasum -a 256 "$1" > "$1.sha256")
+            fi
+          }
+          hash_file "riffty-${{ matrix.target }}.tar.gz"
+          hash_file "riffty-java-${{ matrix.target }}.tar.gz"
+      - name: Package Windows lean core + on-demand Java sidecar archives
         if: matrix.ext == 'zip'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist, staging, staging/riffty-java | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/riffty.exe" staging/
-          Copy-Item "target/${{ matrix.target }}/release/riffty_mcp.exe" staging/
-          Copy-Item "target/${{ matrix.target }}/release/riffty-ab.exe" staging/
-          Copy-Item -Recurse -Force "plugins/riffty-java/dist/*" staging/riffty-java/
-          Copy-Item LICENSE, README.md staging/
-          Compress-Archive -Path staging/* -DestinationPath "dist/riffty-${{ matrix.target }}.zip"
-          $hash = (Get-FileHash "dist/riffty-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower()
-          "$hash  riffty-${{ matrix.target }}.zip" | Out-File -Encoding ascii "dist/riffty-${{ matrix.target }}.zip.sha256"
+          New-Item -ItemType Directory -Force -Path dist, core-staging, java-staging | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/riffty.exe" core-staging/
+          Copy-Item "target/${{ matrix.target }}/release/riffty_mcp.exe" core-staging/
+          Copy-Item "target/${{ matrix.target }}/release/riffty-ab.exe" core-staging/
+          Copy-Item LICENSE, README.md core-staging/
+          Compress-Archive -Path core-staging/* -DestinationPath "dist/riffty-${{ matrix.target }}.zip"
+          $coreHash = (Get-FileHash "dist/riffty-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$coreHash  riffty-${{ matrix.target }}.zip" | Out-File -Encoding ascii "dist/riffty-${{ matrix.target }}.zip.sha256"
+
+          Copy-Item -Recurse -Force "plugins/riffty-java/dist/*" java-staging/
+          Compress-Archive -Path java-staging/* -DestinationPath "dist/riffty-java-${{ matrix.target }}.zip"
+          $javaHash = (Get-FileHash "dist/riffty-java-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$javaHash  riffty-java-${{ matrix.target }}.zip" | Out-File -Encoding ascii "dist/riffty-java-${{ matrix.target }}.zip.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.target }}
           path: dist/*
 
-  publish-release:
-    name: Publish GitHub Release
+  verify-bundle-linux:
+    name: Clean-Room Verify (Linux Debian 12 — Zero Runtimes)
     needs: build-binaries
+    runs-on: ubuntu-latest
+    container:
+      image: debian:bookworm-slim
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-x86_64-unknown-linux-gnu
+          path: /tmp/dist
+      - name: Verify SHA-256, lean core, and on-demand Java hydration in bare Debian 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Prove container has zero Python/Node/Java preinstalled
+          for bin in java javac python3 node npm cargo; do
+            if command -v "$bin" >/dev/null 2>&1; then
+              echo "ERROR: unexpected runtime $bin in clean-room container" >&2
+              exit 1
+            fi
+          done
+          cd /tmp/dist
+          sha256sum -c riffty-x86_64-unknown-linux-gnu.tar.gz.sha256
+          sha256sum -c riffty-java-x86_64-unknown-linux-gnu.tar.gz.sha256
+
+          mkdir -p /tmp/bin /tmp/cache/plugins/riffty-java
+          tar -xzf riffty-x86_64-unknown-linux-gnu.tar.gz -C /tmp/bin
+          export PATH="/tmp/bin:/usr/bin:/bin"
+          export RIFFTY_CACHE_DIR="/tmp/cache"
+
+          VER="$(riffty --version | awk '{print $2}')"
+          riffty-ab --version
+          riffty plugin status
+
+          # Pre-hydrate from exact release sidecar tarball to simulate cached on-demand hydration
+          mkdir -p "/tmp/cache/plugins/riffty-java/v${VER}"
+          tar -xzf riffty-java-x86_64-unknown-linux-gnu.tar.gz -C "/tmp/cache/plugins/riffty-java/v${VER}"
+
+          mkdir -p /tmp/demo && cd /tmp/demo
+          printf 'async def f(): pass\ndef g(): f()\n' > app.py
+          printf 'export const x = [3, 1, 2].sort();\n' > app.ts
+          printf '{"compilerOptions":{"strict":true}}\n' > tsconfig.json
+          printf 'import java.math.BigDecimal;\nclass App { BigDecimal x = new BigDecimal(0.1); }\n' > App.java
+
+          riffty plugin status
+          rc=0
+          riffty check --offline --require-tier2 --fix --dry-run --summary . || rc=$?
+          if [ "$rc" -ge 2 ]; then
+            echo "ERROR: clean-room Linux check failed with fatal exit $rc" >&2
+            exit "$rc"
+          fi
+
+  verify-bundle-macos:
+    name: Clean-Room Verify (macOS arm64 — Stripped env -i)
+    needs: build-binaries
+    runs-on: macos-14
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-aarch64-apple-darwin
+          path: /tmp/dist
+      - name: Verify SHA-256 and zero-JAVA_HOME execution on macOS arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/dist
+          shasum -a 256 -c riffty-aarch64-apple-darwin.tar.gz.sha256
+          shasum -a 256 -c riffty-java-aarch64-apple-darwin.tar.gz.sha256
+
+          CLEAN_HOME="$(mktemp -d)"
+          mkdir -p "$CLEAN_HOME/bin" "$CLEAN_HOME/demo"
+          tar -xzf riffty-aarch64-apple-darwin.tar.gz -C "$CLEAN_HOME/bin"
+          VER="$("$CLEAN_HOME/bin/riffty" --version | awk '{print $2}')"
+          mkdir -p "$CLEAN_HOME/cache/plugins/riffty-java/v${VER}"
+          tar -xzf riffty-java-aarch64-apple-darwin.tar.gz -C "$CLEAN_HOME/cache/plugins/riffty-java/v${VER}"
+
+          printf 'async def f(): pass\ndef g(): f()\n' > "$CLEAN_HOME/demo/app.py"
+          printf 'export const x = [3, 1, 2].sort();\n' > "$CLEAN_HOME/demo/app.ts"
+          printf '{"compilerOptions":{"strict":true}}\n' > "$CLEAN_HOME/demo/tsconfig.json"
+          printf 'import java.math.BigDecimal;\nclass App { BigDecimal x = new BigDecimal(0.1); }\n' > "$CLEAN_HOME/demo/App.java"
+
+          env -i HOME="$CLEAN_HOME" RIFFTY_CACHE_DIR="$CLEAN_HOME/cache" PATH="$CLEAN_HOME/bin:/usr/bin:/bin" bash -euo pipefail -c '
+            riffty --version
+            riffty-ab --version
+            riffty plugin status
+            cd "$HOME/demo"
+            rc=0
+            riffty check --offline --require-tier2 --fix --dry-run --summary . || rc=$?
+            if [ "$rc" -ge 2 ]; then exit "$rc"; fi
+          '
+
+  publish-release:
+    name: Publish Attested GitHub Release + SBOM
+    needs: [build-binaries, verify-bundle-linux, verify-bundle-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -114,14 +223,46 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-      - name: Prepare installers
+      - name: Prepare verified installers
         run: |
           cp scripts/install.sh artifacts/riffty-installer.sh
           cp scripts/install.ps1 artifacts/riffty-installer.ps1
           chmod +x artifacts/riffty-installer.sh
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: artifacts/riffty-sbom.cdx.json
+          upload-artifact: false
+      - name: Attest SLSA Build Provenance for all release archives
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            artifacts/riffty-*.tar.gz
+            artifacts/riffty-*.zip
+            artifacts/riffty-sbom.cdx.json
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') }}
+
+  publish-docker:
+    name: Publish Pre-Hydrated Docker Image to GHCR
+    needs: [verify-bundle-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push ghcr.io/riffty-sh/riffty
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          docker build -t "ghcr.io/riffty-sh/riffty:${TAG}" -t "ghcr.io/riffty-sh/riffty:latest" .
+          docker push "ghcr.io/riffty-sh/riffty:${TAG}"
+          docker push "ghcr.io/riffty-sh/riffty:latest"
