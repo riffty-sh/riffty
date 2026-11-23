@@ -52,7 +52,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://github.com/riffty-sh/riffty/r
 ### From Source (Cargo)
 
 ```bash
-cargo install --git https://github.com/riffty-sh/riffty --tag v0.4.0 riffty_cli riffty_ab # x-release-please-version
+cargo install --git https://github.com/riffty-sh/riffty --tag v0.4.1 riffty_cli riffty_ab # x-release-please-version
 ```
 
 ---
