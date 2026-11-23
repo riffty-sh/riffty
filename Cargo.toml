@@ -63,7 +63,7 @@ ruff_db = { version = "0.0.22", default-features = false }
 ty_module_resolver = "0.0.22"
 ty_python_core = { version = "0.0.22", features = ["testing"] }
 ty_python_semantic = "0.0.22"
-ty_site_packages = "0.0.22"
+ty_site_packages = "0.0.23"
 ty_vendored = "0.0.22"
 salsa = { version = "0.28.5", default-features = false, features = ["compact_str", "macros", "salsa_unstable", "inventory", "ordermap"] }
 ast-grep-core = "0.51.2"
