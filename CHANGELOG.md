@@ -5,6 +5,14 @@ All notable changes to `riffty` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2](https://github.com/riffty-sh/riffty/compare/v0.4.1...v0.4.2) (2026-11-23)
+
+
+### Fixed
+
+* **windows:** pass Expand-Archive zip paths via env vars in hydrate.rs ([58c0503](https://github.com/riffty-sh/riffty/commit/58c0503d558f24e49cfb6193109fc27aed9f422f))
+* **windows:** use .NET ZipFile::ExtractToDirectory to avoid PS7/PS5.1 Expand-Archive module clash ([7d620b8](https://github.com/riffty-sh/riffty/commit/7d620b8017861e5cc65c09bd6c796c248a1317e8))
+
 ## [0.4.1](https://github.com/riffty-sh/riffty/compare/v0.4.0...v0.4.1) (2026-11-23)
 
 

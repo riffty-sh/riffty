@@ -23,29 +23,29 @@ members = [
 ]
 
 [workspace.package]
-version = "0.4.1" # x-release-please-version
+version = "0.4.2" # x-release-please-version
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/riffty-sh/riffty"
 
 [workspace.dependencies]
-riffty_core = { version = "0.4.1", path = "crates/riffty_core" } # x-release-please-version
-riffty_infra_core = { version = "0.4.1", path = "crates/riffty_infra_core" } # x-release-please-version
-riffty_ab_core = { version = "0.4.1", path = "crates/riffty_ab_core" } # x-release-please-version
-riffty_pipeline = { version = "0.4.1", path = "crates/riffty_pipeline" } # x-release-please-version
-riffty_rules_builtin = { version = "0.4.1", path = "crates/riffty_rules_builtin" } # x-release-please-version
-riffty_adapter_ruff_ast = { version = "0.4.1", path = "crates/adapters/riffty_adapter_ruff_ast" } # x-release-please-version
-riffty_adapter_fs = { version = "0.4.1", path = "crates/adapters/riffty_adapter_fs" } # x-release-please-version
-riffty_adapter_ast_grep = { version = "0.4.1", path = "crates/adapters/riffty_adapter_ast_grep" } # x-release-please-version
-riffty_adapter_ty = { version = "0.4.1", path = "crates/adapters/riffty_adapter_ty" } # x-release-please-version
-riffty_adapter_refaster = { version = "0.4.1", path = "crates/adapters/riffty_adapter_refaster" } # x-release-please-version
-riffty_adapter_java_fast = { version = "0.4.1", path = "crates/adapters/riffty_adapter_java_fast" } # x-release-please-version
-riffty_adapter_jsts_fast = { version = "0.4.1", path = "crates/adapters/riffty_adapter_jsts_fast" } # x-release-please-version
-riffty_adapter_tsrs = { version = "0.4.1", path = "crates/adapters/riffty_adapter_tsrs" } # x-release-please-version
-riffty_adapter_plugin = { version = "0.4.1", path = "crates/adapters/riffty_adapter_plugin" } # x-release-please-version
-riffty_adapter_infra = { version = "0.4.1", path = "crates/adapters/riffty_adapter_infra" } # x-release-please-version
-riffty_mcp = { version = "0.4.1", path = "apps/riffty_mcp" } # x-release-please-version
+riffty_core = { version = "0.4.2", path = "crates/riffty_core" } # x-release-please-version
+riffty_infra_core = { version = "0.4.2", path = "crates/riffty_infra_core" } # x-release-please-version
+riffty_ab_core = { version = "0.4.2", path = "crates/riffty_ab_core" } # x-release-please-version
+riffty_pipeline = { version = "0.4.2", path = "crates/riffty_pipeline" } # x-release-please-version
+riffty_rules_builtin = { version = "0.4.2", path = "crates/riffty_rules_builtin" } # x-release-please-version
+riffty_adapter_ruff_ast = { version = "0.4.2", path = "crates/adapters/riffty_adapter_ruff_ast" } # x-release-please-version
+riffty_adapter_fs = { version = "0.4.2", path = "crates/adapters/riffty_adapter_fs" } # x-release-please-version
+riffty_adapter_ast_grep = { version = "0.4.2", path = "crates/adapters/riffty_adapter_ast_grep" } # x-release-please-version
+riffty_adapter_ty = { version = "0.4.2", path = "crates/adapters/riffty_adapter_ty" } # x-release-please-version
+riffty_adapter_refaster = { version = "0.4.2", path = "crates/adapters/riffty_adapter_refaster" } # x-release-please-version
+riffty_adapter_java_fast = { version = "0.4.2", path = "crates/adapters/riffty_adapter_java_fast" } # x-release-please-version
+riffty_adapter_jsts_fast = { version = "0.4.2", path = "crates/adapters/riffty_adapter_jsts_fast" } # x-release-please-version
+riffty_adapter_tsrs = { version = "0.4.2", path = "crates/adapters/riffty_adapter_tsrs" } # x-release-please-version
+riffty_adapter_plugin = { version = "0.4.2", path = "crates/adapters/riffty_adapter_plugin" } # x-release-please-version
+riffty_adapter_infra = { version = "0.4.2", path = "crates/adapters/riffty_adapter_infra" } # x-release-please-version
+riffty_mcp = { version = "0.4.2", path = "apps/riffty_mcp" } # x-release-please-version
 clap = { version = "4.6", features = ["derive", "env"] }
 rmcp = { version = "3.10.0", default-features = false, features = ["server", "transport-io"] }
 tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "io-std", "sync"] }
